@@ -247,7 +247,7 @@ fn opt_parsed<T: FromStr>(opt_name: &str, matches: &ArgMatches) -> UResult<Optio
     })
 }
 
-fn obsolete_skip_field_occurrencies(matches: &ArgMatches) -> Option<usize> {
+fn obsolete_skip_field(matches: &ArgMatches) -> Option<usize> {
     for i in 0..=9 {
         let mut s: String = i.to_string();
         let v = matches.get_one::<String>(&s);
@@ -284,7 +284,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
     let skip_fields_modern: Option<usize> = opt_parsed(options::SKIP_FIELDS, &matches)?;
 
-    let skip_fields_old = obsolete_skip_field_occurrencies(&matches);
+    let skip_fields_old = obsolete_skip_field(&matches);
 
     let uniq = Uniq {
         repeats_only: matches.get_flag(options::REPEATED)
@@ -315,7 +315,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 }
 
 pub fn uu_app() -> Command {
-    Command::new(uucore::util_name())
+    let mut res = Command::new(uucore::util_name())
         .version(crate_version!())
         .about(ABOUT)
         .override_usage(format_usage(USAGE))
@@ -411,56 +411,6 @@ pub fn uu_app() -> Command {
                 .help("end lines with 0 byte, not newline")
                 .action(ArgAction::SetTrue),
         )
-        .arg(
-            Arg::new("0")
-            .short('0')
-            .num_args(0..=1)
-        )
-        .arg(
-            Arg::new("1")
-            .short('1')
-            .num_args(0..=1)
-        )
-        .arg(
-            Arg::new("2")
-            .short('2')
-            .num_args(0..=1)
-        )
-        .arg(
-            Arg::new("3")
-            .short('3')
-            .num_args(0..=1)
-        )
-        .arg(
-            Arg::new("4")
-            .short('4')
-            .num_args(0..=1)
-        )
-        .arg(
-            Arg::new("5")
-            .short('5')
-            .num_args(0..=1)
-        )
-        .arg(
-            Arg::new("6")
-            .short('6')
-            .num_args(0..=1)
-        )
-        .arg(
-            Arg::new("7")
-            .short('7')
-            .num_args(0..=1)
-        )
-        .arg(
-            Arg::new("8")
-            .short('8')
-            .num_args(0..=1)
-        )
-        .arg(
-            Arg::new("9")
-            .short('9')
-            .num_args(0..=1)
-        )
         .group(
             ArgGroup::new("obsolete_skip_field")
             .multiple(false)
@@ -471,7 +421,17 @@ pub fn uu_app() -> Command {
                 .action(ArgAction::Append)
                 .num_args(0..=2)
                 .value_hint(clap::ValueHint::FilePath),
-        )
+        );
+
+    for i in ["0","1","2","3","4","5","6","7","8","9"] { //can't iterate over {0..=9} because it doesn't support Into<Id>
+        res = res.arg(
+            Arg::new(i)
+            .short(i.chars().next().unwrap())
+            .num_args(0..=1)
+        );
+    }
+
+    res
 }
 
 fn get_delimiter(matches: &ArgMatches) -> Delimiters {
