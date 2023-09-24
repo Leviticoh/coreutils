@@ -1,9 +1,7 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * (c) Alan Andrade <alan.andradec@gmail.com>
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 // spell-checker:ignore (ToDO) MAKEWORD addrs hashset
 
@@ -16,11 +14,11 @@ use clap::{crate_version, Arg, ArgAction, ArgMatches, Command};
 
 use uucore::{
     error::{FromIo, UResult},
-    format_usage,
+    format_usage, help_about, help_usage,
 };
 
-static ABOUT: &str = "Display or set the system's host name.";
-const USAGE: &str = "{} [OPTION]... [HOSTNAME]";
+const ABOUT: &str = help_about!("hostname.md");
+const USAGE: &str = help_usage!("hostname.md");
 
 static OPT_DOMAIN: &str = "domain";
 static OPT_IP_ADDRESS: &str = "ip-address";
@@ -41,10 +39,10 @@ mod wsa {
             let mut data = std::mem::MaybeUninit::<WSADATA>::uninit();
             WSAStartup(0x0202, data.as_mut_ptr())
         };
-        if err != 0 {
-            Err(io::Error::from_raw_os_error(err))
-        } else {
+        if err == 0 {
             Ok(WsaHandle(()))
+        } else {
+            Err(io::Error::from_raw_os_error(err))
         }
     }
 
@@ -164,7 +162,7 @@ fn display_hostname(matches: &ArgMatches) -> UResult<()> {
             }
         }
 
-        println!("{}", hostname);
+        println!("{hostname}");
 
         Ok(())
     }

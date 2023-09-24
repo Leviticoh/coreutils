@@ -1,13 +1,9 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * (c) Alexander Fomin <xander.fomin@ya.ru>
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 /* Last synced with: sync (GNU coreutils) 8.13 */
-
-extern crate libc;
 
 use clap::{crate_version, Arg, ArgAction, Command};
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -21,10 +17,11 @@ use uucore::display::Quotable;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use uucore::error::FromIo;
 use uucore::error::{UResult, USimpleError};
-use uucore::format_usage;
+use uucore::{format_usage, help_about, help_usage};
 
-static ABOUT: &str = "Synchronize cached writes to persistent storage";
-const USAGE: &str = "{} [OPTION]... FILE...";
+const ABOUT: &str = help_about!("sync.md");
+const USAGE: &str = help_usage!("sync.md");
+
 pub mod options {
     pub static FILE_SYSTEM: &str = "file-system";
     pub static DATA: &str = "data";
@@ -34,7 +31,6 @@ static ARG_FILES: &str = "files";
 
 #[cfg(unix)]
 mod platform {
-    use super::libc;
     #[cfg(any(target_os = "linux", target_os = "android"))]
     use std::fs::File;
     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -175,7 +171,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             let path = Path::new(&f);
             if let Err(e) = open(path, OFlag::O_NONBLOCK, Mode::empty()) {
                 if e != Errno::EACCES || (e == Errno::EACCES && path.is_dir()) {
-                    return e.map_err_context(|| format!("cannot stat {}", f.quote()))?;
+                    e.map_err_context(|| format!("error opening {}", f.quote()))?;
                 }
             }
         }
@@ -185,7 +181,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             if !Path::new(&f).exists() {
                 return Err(USimpleError::new(
                     1,
-                    format!("cannot stat {}: No such file or directory", f.quote()),
+                    format!("error opening {}: No such file or directory", f.quote()),
                 ));
             }
         }

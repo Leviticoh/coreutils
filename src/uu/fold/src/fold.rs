@@ -1,9 +1,7 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * (c) Alex Lyon <arcterus@mail.com>
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 // spell-checker:ignore (ToDOs) ncount routput
 
@@ -13,14 +11,12 @@ use std::io::{stdin, BufRead, BufReader, Read};
 use std::path::Path;
 use uucore::display::Quotable;
 use uucore::error::{FromIo, UResult, USimpleError};
-use uucore::format_usage;
+use uucore::{format_usage, help_about, help_usage};
 
 const TAB_WIDTH: usize = 8;
 
-static NAME: &str = "fold";
-static USAGE: &str = "{} [OPTION]... [FILE]...";
-static ABOUT: &str = "Writes each file (or standard input if no files are given)
- to standard output whilst breaking long lines";
+const USAGE: &str = help_usage!("fold.md");
+const ABOUT: &str = help_about!("fold.md");
 
 mod options {
     pub const BYTES: &str = "bytes";
@@ -63,7 +59,6 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
 pub fn uu_app() -> Command {
     Command::new(uucore::util_name())
-        .name(NAME)
         .version(crate_version!())
         .override_usage(format_usage(USAGE))
         .about(ABOUT)
@@ -190,9 +185,9 @@ fn fold_file_bytewise<T: Read>(mut file: BufReader<T>, spaces: bool, width: usiz
             let at_eol = i >= len;
 
             if at_eol {
-                print!("{}", slice);
+                print!("{slice}");
             } else {
-                println!("{}", slice);
+                println!("{slice}");
             }
         }
 
@@ -210,6 +205,7 @@ fn fold_file_bytewise<T: Read>(mut file: BufReader<T>, spaces: bool, width: usiz
 ///
 /// If `spaces` is `true`, attempt to break lines at whitespace boundaries.
 #[allow(unused_assignments)]
+#[allow(clippy::cognitive_complexity)]
 fn fold_file<T: Read>(mut file: BufReader<T>, spaces: bool, width: usize) -> UResult<()> {
     let mut line = String::new();
     let mut output = String::new();
@@ -287,7 +283,7 @@ fn fold_file<T: Read>(mut file: BufReader<T>, spaces: bool, width: usize) -> URe
         }
 
         if !output.is_empty() {
-            print!("{}", output);
+            print!("{output}");
             output.truncate(0);
         }
 

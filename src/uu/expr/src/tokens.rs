@@ -1,9 +1,7 @@
-//* This file is part of the uutils coreutils package.
-//*
-//* (c) Roman Gafiyatullin <r.gafiyatullin@me.com>
-//*
-//* For the full copyright and license information, please view the LICENSE
-//* file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 //!
 //! The following tokens are present in the expr grammar:
@@ -122,7 +120,7 @@ fn maybe_dump_tokens_acc(tokens_acc: &[(usize, Token)]) {
         if debug_var == "1" {
             println!("EXPR_DEBUG_TOKENS");
             for token in tokens_acc {
-                println!("\t{:?}", token);
+                println!("\t{token:?}");
             }
         }
     }

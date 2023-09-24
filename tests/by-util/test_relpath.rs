@@ -1,4 +1,8 @@
-use crate::common::util::*;
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
+use crate::common::util::TestScenario;
 use std::borrow::Cow;
 use std::path::Path;
 
@@ -87,7 +91,7 @@ fn test_relpath_with_from_no_d() {
             .arg(to)
             .arg(from)
             .succeeds()
-            .stdout_only(&format!("{}\n", expected));
+            .stdout_only(&format!("{expected}\n"));
     }
 }
 
@@ -108,7 +112,7 @@ fn test_relpath_with_from_with_d() {
             .ucmd()
             .arg(to)
             .arg(from)
-            .arg(&format!("-d{}", pwd))
+            .arg(&format!("-d{pwd}"))
             .succeeds()
             .stdout_move_str();
         // relax rules for windows test environment
@@ -138,10 +142,10 @@ fn test_relpath_no_from_no_d() {
 
         let _result_stdout = scene.ucmd().arg(to).succeeds().stdout_move_str();
         #[cfg(not(windows))]
-        assert_eq!(_result_stdout, format!("{}\n", to));
+        assert_eq!(_result_stdout, format!("{to}\n"));
         // relax rules for windows test environment
         #[cfg(windows)]
-        assert!(_result_stdout.ends_with(&format!("{}\n", to)));
+        assert!(_result_stdout.ends_with(&format!("{to}\n")));
     }
 }
 
@@ -159,7 +163,7 @@ fn test_relpath_no_from_with_d() {
         let _result_stdout = scene
             .ucmd()
             .arg(to)
-            .arg(&format!("-d{}", pwd))
+            .arg(&format!("-d{pwd}"))
             .succeeds()
             .stdout_move_str();
         // relax rules for windows test environment
@@ -175,4 +179,11 @@ fn test_relpath_no_from_with_d() {
             .stdout_move_str();
         assert!(Path::new(&result_stdout).is_absolute());
     }
+}
+
+#[test]
+fn test_relpath_no_to() {
+    new_ucmd!()
+        .fails()
+        .stderr_contains("required arguments were not provided");
 }

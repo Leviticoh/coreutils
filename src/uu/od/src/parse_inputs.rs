@@ -1,3 +1,7 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 use super::options;
 use clap::ArgMatches;
 
@@ -90,8 +94,8 @@ pub fn parse_inputs(matches: &dyn CommandLineOpts) -> Result<CommandLineInputs, 
 
 /// interprets inputs when --traditional is on the command line
 ///
-/// normally returns CommandLineInputs::FileAndOffset, but if no offset is found,
-/// it returns CommandLineInputs::FileNames (also to differentiate from the offset == 0)
+/// normally returns `CommandLineInputs::FileAndOffset`, but if no offset is found,
+/// it returns `CommandLineInputs::FileNames` (also to differentiate from the offset == 0)
 pub fn parse_inputs_traditional(input_strings: &[&str]) -> Result<CommandLineInputs, String> {
     match input_strings.len() {
         0 => Ok(CommandLineInputs::FileNames(vec!["-".to_string()])),

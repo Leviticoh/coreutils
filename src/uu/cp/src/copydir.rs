@@ -1,7 +1,7 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 // spell-checker:ignore TODO canonicalizes direntry pathbuf symlinked
 //! Recursively copy the contents of a directory.
 //!
@@ -25,7 +25,7 @@ use walkdir::{DirEntry, WalkDir};
 
 use crate::{
     aligned_ancestors, context_for, copy_attributes, copy_file, copy_link, preserve_hardlinks,
-    CopyResult, Error, Options, TargetSlice,
+    CopyResult, Error, Options,
 };
 
 /// Ensure a Windows path starts with a `\\?`.
@@ -33,8 +33,8 @@ use crate::{
 fn adjust_canonicalization(p: &Path) -> Cow<Path> {
     // In some cases, \\? can be missing on some Windows paths.  Add it at the
     // beginning unless the path is prefixed with a device namespace.
-    const VERBATIM_PREFIX: &str = r#"\\?"#;
-    const DEVICE_NS_PREFIX: &str = r#"\\."#;
+    const VERBATIM_PREFIX: &str = r"\\?";
+    const DEVICE_NS_PREFIX: &str = r"\\.";
 
     let has_prefix = p
         .components()
@@ -93,7 +93,7 @@ impl<'a> Context<'a> {
     fn new(root: &'a Path, target: &'a Path) -> std::io::Result<Self> {
         let current_dir = env::current_dir()?;
         let root_path = current_dir.join(root);
-        let root_parent = if target.exists() {
+        let root_parent = if target.exists() && !root.to_str().unwrap().ends_with("/.") {
             root_path.parent().map(|p| p.to_path_buf())
         } else {
             Some(root_path)
@@ -307,7 +307,7 @@ fn copy_direntry(
 pub(crate) fn copy_directory(
     progress_bar: &Option<ProgressBar>,
     root: &Path,
-    target: &TargetSlice,
+    target: &Path,
     options: &Options,
     symlinked_files: &mut HashSet<FileInformation>,
     source_in_command_line: bool,
@@ -380,7 +380,7 @@ pub(crate) fn copy_directory(
     // the target directory.
     let context = match Context::new(root, target) {
         Ok(c) => c,
-        Err(e) => return Err(format!("failed to get current directory {}", e).into()),
+        Err(e) => return Err(format!("failed to get current directory {e}").into()),
     };
 
     // Traverse the contents of the directory, copying each one.
@@ -404,8 +404,18 @@ pub(crate) fn copy_directory(
             Err(e) => show_error!("{}", e),
         }
     }
+
     // Copy the attributes from the root directory to the target directory.
-    copy_attributes(root, target, &options.preserve_attributes)?;
+    if options.parents {
+        let dest = target.join(root.file_name().unwrap());
+        copy_attributes(root, dest.as_path(), &options.attributes)?;
+        for (x, y) in aligned_ancestors(root, dest.as_path()) {
+            copy_attributes(x, y, &options.attributes)?;
+        }
+    } else {
+        copy_attributes(root, target, &options.attributes)?;
+    }
+
     Ok(())
 }
 

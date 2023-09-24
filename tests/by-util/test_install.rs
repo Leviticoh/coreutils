@@ -1,13 +1,17 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 // spell-checker:ignore (words) helloworld nodir objdump n'source
 
-use crate::common::util::*;
+use crate::common::util::{is_ci, TestScenario};
 use filetime::FileTime;
-use rust_users::*;
 use std::os::unix::fs::PermissionsExt;
 #[cfg(not(any(windows, target_os = "freebsd")))]
 use std::process::Command;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use std::thread::sleep;
+use uucore::process::{getegid, geteuid};
 
 #[test]
 fn test_invalid_arg() {
@@ -28,8 +32,8 @@ fn test_install_basic() {
 
     assert!(at.file_exists(file1));
     assert!(at.file_exists(file2));
-    assert!(at.file_exists(&format!("{}/{}", dir, file1)));
-    assert!(at.file_exists(&format!("{}/{}", dir, file2)));
+    assert!(at.file_exists(format!("{dir}/{file1}")));
+    assert!(at.file_exists(format!("{dir}/{file2}")));
 }
 
 #[test]
@@ -76,7 +80,7 @@ fn test_install_unimplemented_arg() {
         .fails()
         .stderr_contains("Unimplemented");
 
-    assert!(!at.file_exists(&format!("{}/{}", dir, file)));
+    assert!(!at.file_exists(format!("{dir}/{file}")));
 }
 
 #[test]
@@ -122,6 +126,37 @@ fn test_install_ancestors_mode_directories() {
 
     // Expected mode only on the target_dir.
     assert_eq!(0o40_200_u32, at.metadata(target_dir).permissions().mode());
+}
+
+#[test]
+fn test_install_ancestors_mode_directories_with_file() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let ancestor1 = "ancestor1";
+    let ancestor2 = "ancestor1/ancestor2";
+    let target_file = "ancestor1/ancestor2/target_file";
+    let directories_arg = "-D";
+    let mode_arg = "--mode=200";
+    let file = "file";
+    let probe = "probe";
+
+    at.mkdir(probe);
+    let default_perms = at.metadata(probe).permissions().mode();
+
+    at.touch(file);
+
+    ucmd.args(&[mode_arg, directories_arg, file, target_file])
+        .succeeds()
+        .no_stderr();
+
+    assert!(at.dir_exists(ancestor1));
+    assert!(at.dir_exists(ancestor2));
+    assert!(at.file_exists(target_file));
+
+    assert_eq!(default_perms, at.metadata(ancestor1).permissions().mode());
+    assert_eq!(default_perms, at.metadata(ancestor2).permissions().mode());
+
+    // Expected mode only on the target_file.
+    assert_eq!(0o100_200_u32, at.metadata(target_file).permissions().mode());
 }
 
 #[test]
@@ -181,7 +216,7 @@ fn test_install_mode_numeric() {
         .succeeds()
         .no_stderr();
 
-    let dest_file = &format!("{}/{}", dir, file);
+    let dest_file = &format!("{dir}/{file}");
     assert!(at.file_exists(file));
     assert!(at.file_exists(dest_file));
     let permissions = at.metadata(dest_file).permissions();
@@ -192,7 +227,7 @@ fn test_install_mode_numeric() {
 
     scene.ucmd().arg(mode_arg).arg(file).arg(dir2).succeeds();
 
-    let dest_file = &format!("{}/{}", dir2, file);
+    let dest_file = &format!("{dir2}/{file}");
     assert!(at.file_exists(file));
     assert!(at.file_exists(dest_file));
     let permissions = at.metadata(dest_file).permissions();
@@ -210,7 +245,7 @@ fn test_install_mode_symbolic() {
     at.mkdir(dir);
     ucmd.arg(file).arg(dir).arg(mode_arg).succeeds().no_stderr();
 
-    let dest_file = &format!("{}/{}", dir, file);
+    let dest_file = &format!("{dir}/{file}");
     assert!(at.file_exists(file));
     assert!(at.file_exists(dest_file));
     let permissions = at.metadata(dest_file).permissions();
@@ -232,7 +267,7 @@ fn test_install_mode_failing() {
         .fails()
         .stderr_contains("Invalid mode string: invalid digit found in string");
 
-    let dest_file = &format!("{}/{}", dir, file);
+    let dest_file = &format!("{dir}/{file}");
     assert!(at.file_exists(file));
     assert!(!at.file_exists(dest_file));
 }
@@ -278,12 +313,12 @@ fn test_install_target_new_file() {
     at.touch(file);
     at.mkdir(dir);
     ucmd.arg(file)
-        .arg(format!("{}/{}", dir, file))
+        .arg(format!("{dir}/{file}"))
         .succeeds()
         .no_stderr();
 
     assert!(at.file_exists(file));
-    assert!(at.file_exists(&format!("{}/{}", dir, file)));
+    assert!(at.file_exists(format!("{dir}/{file}")));
 }
 
 #[test]
@@ -291,7 +326,7 @@ fn test_install_target_new_file_with_group() {
     let (at, mut ucmd) = at_and_ucmd!();
     let file = "file";
     let dir = "target_dir";
-    let gid = get_effective_gid();
+    let gid = getegid();
 
     at.touch(file);
     at.mkdir(dir);
@@ -299,7 +334,7 @@ fn test_install_target_new_file_with_group() {
         .arg(file)
         .arg("--group")
         .arg(gid.to_string())
-        .arg(format!("{}/{}", dir, file))
+        .arg(format!("{dir}/{file}"))
         .run();
 
     if is_ci() && result.stderr_str().contains("no such group:") {
@@ -310,7 +345,7 @@ fn test_install_target_new_file_with_group() {
 
     result.success();
     assert!(at.file_exists(file));
-    assert!(at.file_exists(&format!("{}/{}", dir, file)));
+    assert!(at.file_exists(format!("{dir}/{file}")));
 }
 
 #[test]
@@ -318,7 +353,7 @@ fn test_install_target_new_file_with_owner() {
     let (at, mut ucmd) = at_and_ucmd!();
     let file = "file";
     let dir = "target_dir";
-    let uid = get_effective_uid();
+    let uid = geteuid();
 
     at.touch(file);
     at.mkdir(dir);
@@ -326,7 +361,7 @@ fn test_install_target_new_file_with_owner() {
         .arg(file)
         .arg("--owner")
         .arg(uid.to_string())
-        .arg(format!("{}/{}", dir, file))
+        .arg(format!("{dir}/{file}"))
         .run();
 
     if is_ci() && result.stderr_str().contains("no such user:") {
@@ -337,7 +372,7 @@ fn test_install_target_new_file_with_owner() {
 
     result.success();
     assert!(at.file_exists(file));
-    assert!(at.file_exists(&format!("{}/{}", dir, file)));
+    assert!(at.file_exists(format!("{dir}/{file}")));
 }
 
 #[test]
@@ -350,7 +385,7 @@ fn test_install_target_new_file_failing_nonexistent_parent() {
     at.touch(file1);
 
     ucmd.arg(file1)
-        .arg(format!("{}/{}", dir, file2))
+        .arg(format!("{dir}/{file2}"))
         .fails()
         .stderr_contains("No such file or directory");
 }
@@ -416,13 +451,13 @@ fn test_install_nested_paths_copy_file() {
 
     at.mkdir(dir1);
     at.mkdir(dir2);
-    at.touch(&format!("{}/{}", dir1, file1));
+    at.touch(format!("{dir1}/{file1}"));
 
-    ucmd.arg(format!("{}/{}", dir1, file1))
+    ucmd.arg(format!("{dir1}/{file1}"))
         .arg(dir2)
         .succeeds()
         .no_stderr();
-    assert!(at.file_exists(&format!("{}/{}", dir2, file1)));
+    assert!(at.file_exists(format!("{dir2}/{file1}")));
 }
 
 #[test]
@@ -456,7 +491,7 @@ fn test_install_failing_omitting_directory() {
         .fails()
         .code_is(1)
         .stderr_contains("omitting directory");
-    assert!(at.file_exists(&format!("{}/{}", dir3, file1)));
+    assert!(at.file_exists(format!("{dir3}/{file1}")));
 
     // install also fails, when only one source param is given
     scene
@@ -754,7 +789,7 @@ fn test_install_creating_leading_dirs_with_single_source_and_target_dir() {
         .succeeds()
         .no_stderr();
 
-    assert!(at.file_exists(&format!("{target_dir}/{source1}")));
+    assert!(at.file_exists(format!("{target_dir}/{source1}")));
 }
 
 #[test]
@@ -826,14 +861,14 @@ fn test_install_dir() {
     at.mkdir(dir);
     ucmd.arg(file1)
         .arg(file2)
-        .arg(&format!("--target-directory={}", dir))
+        .arg(&format!("--target-directory={dir}"))
         .succeeds()
         .no_stderr();
 
     assert!(at.file_exists(file1));
     assert!(at.file_exists(file2));
-    assert!(at.file_exists(&format!("{}/{}", dir, file1)));
-    assert!(at.file_exists(&format!("{}/{}", dir, file2)));
+    assert!(at.file_exists(format!("{dir}/{file1}")));
+    assert!(at.file_exists(format!("{dir}/{file2}")));
 }
 //
 // test backup functionality
@@ -857,7 +892,7 @@ fn test_install_backup_short_no_args_files() {
 
     assert!(at.file_exists(file_a));
     assert!(at.file_exists(file_b));
-    assert!(at.file_exists(&format!("{}~", file_b)));
+    assert!(at.file_exists(format!("{file_b}~")));
 }
 
 #[test]
@@ -867,7 +902,7 @@ fn test_install_backup_short_no_args_file_to_dir() {
 
     let file = "test_install_simple_backup_file_a";
     let dest_dir = "test_install_dest/";
-    let expect = format!("{}{}", dest_dir, file);
+    let expect = format!("{dest_dir}{file}");
 
     at.touch(file);
     at.mkdir(dest_dir);
@@ -882,7 +917,7 @@ fn test_install_backup_short_no_args_file_to_dir() {
 
     assert!(at.file_exists(file));
     assert!(at.file_exists(&expect));
-    assert!(at.file_exists(&format!("{}~", expect)));
+    assert!(at.file_exists(format!("{expect}~")));
 }
 
 // Long --backup option is tested separately as it requires a slightly different
@@ -907,7 +942,7 @@ fn test_install_backup_long_no_args_files() {
 
     assert!(at.file_exists(file_a));
     assert!(at.file_exists(file_b));
-    assert!(at.file_exists(&format!("{}~", file_b)));
+    assert!(at.file_exists(format!("{file_b}~")));
 }
 
 #[test]
@@ -917,7 +952,7 @@ fn test_install_backup_long_no_args_file_to_dir() {
 
     let file = "test_install_simple_backup_file_a";
     let dest_dir = "test_install_dest/";
-    let expect = format!("{}{}", dest_dir, file);
+    let expect = format!("{dest_dir}{file}");
 
     at.touch(file);
     at.mkdir(dest_dir);
@@ -932,7 +967,7 @@ fn test_install_backup_long_no_args_file_to_dir() {
 
     assert!(at.file_exists(file));
     assert!(at.file_exists(&expect));
-    assert!(at.file_exists(&format!("{}~", expect)));
+    assert!(at.file_exists(format!("{expect}~")));
 }
 
 #[test]
@@ -949,7 +984,7 @@ fn test_install_backup_short_custom_suffix() {
     scene
         .ucmd()
         .arg("-b")
-        .arg(format!("--suffix={}", suffix))
+        .arg(format!("--suffix={suffix}"))
         .arg(file_a)
         .arg(file_b)
         .succeeds()
@@ -957,7 +992,7 @@ fn test_install_backup_short_custom_suffix() {
 
     assert!(at.file_exists(file_a));
     assert!(at.file_exists(file_b));
-    assert!(at.file_exists(&format!("{}{}", file_b, suffix)));
+    assert!(at.file_exists(format!("{file_b}{suffix}")));
 }
 
 #[test]
@@ -974,7 +1009,7 @@ fn test_install_backup_short_custom_suffix_hyphen_value() {
     scene
         .ucmd()
         .arg("-b")
-        .arg(format!("--suffix={}", suffix))
+        .arg(format!("--suffix={suffix}"))
         .arg(file_a)
         .arg(file_b)
         .succeeds()
@@ -982,7 +1017,7 @@ fn test_install_backup_short_custom_suffix_hyphen_value() {
 
     assert!(at.file_exists(file_a));
     assert!(at.file_exists(file_b));
-    assert!(at.file_exists(&format!("{}{}", file_b, suffix)));
+    assert!(at.file_exists(format!("{file_b}{suffix}")));
 }
 
 #[test]
@@ -1007,7 +1042,7 @@ fn test_install_backup_custom_suffix_via_env() {
 
     assert!(at.file_exists(file_a));
     assert!(at.file_exists(file_b));
-    assert!(at.file_exists(&format!("{}{}", file_b, suffix)));
+    assert!(at.file_exists(format!("{file_b}{suffix}")));
 }
 
 #[test]
@@ -1030,7 +1065,7 @@ fn test_install_backup_numbered_with_t() {
 
     assert!(at.file_exists(file_a));
     assert!(at.file_exists(file_b));
-    assert!(at.file_exists(&format!("{}.~1~", file_b)));
+    assert!(at.file_exists(format!("{file_b}.~1~")));
 }
 
 #[test]
@@ -1053,7 +1088,7 @@ fn test_install_backup_numbered_with_numbered() {
 
     assert!(at.file_exists(file_a));
     assert!(at.file_exists(file_b));
-    assert!(at.file_exists(&format!("{}.~1~", file_b)));
+    assert!(at.file_exists(format!("{file_b}.~1~")));
 }
 
 #[test]
@@ -1076,7 +1111,7 @@ fn test_install_backup_existing() {
 
     assert!(at.file_exists(file_a));
     assert!(at.file_exists(file_b));
-    assert!(at.file_exists(&format!("{}~", file_b)));
+    assert!(at.file_exists(format!("{file_b}~")));
 }
 
 #[test]
@@ -1099,7 +1134,7 @@ fn test_install_backup_nil() {
 
     assert!(at.file_exists(file_a));
     assert!(at.file_exists(file_b));
-    assert!(at.file_exists(&format!("{}~", file_b)));
+    assert!(at.file_exists(format!("{file_b}~")));
 }
 
 #[test]
@@ -1125,7 +1160,7 @@ fn test_install_backup_numbered_if_existing_backup_existing() {
     assert!(at.file_exists(file_a));
     assert!(at.file_exists(file_b));
     assert!(at.file_exists(file_b_backup));
-    assert!(at.file_exists(&format!("{}.~2~", file_b)));
+    assert!(at.file_exists(format!("{file_b}.~2~")));
 }
 
 #[test]
@@ -1151,7 +1186,7 @@ fn test_install_backup_numbered_if_existing_backup_nil() {
     assert!(at.file_exists(file_a));
     assert!(at.file_exists(file_b));
     assert!(at.file_exists(file_b_backup));
-    assert!(at.file_exists(&format!("{}.~2~", file_b)));
+    assert!(at.file_exists(format!("{file_b}.~2~")));
 }
 
 #[test]
@@ -1174,7 +1209,7 @@ fn test_install_backup_simple() {
 
     assert!(at.file_exists(file_a));
     assert!(at.file_exists(file_b));
-    assert!(at.file_exists(&format!("{}~", file_b)));
+    assert!(at.file_exists(format!("{file_b}~")));
 }
 
 #[test]
@@ -1197,7 +1232,7 @@ fn test_install_backup_never() {
 
     assert!(at.file_exists(file_a));
     assert!(at.file_exists(file_b));
-    assert!(at.file_exists(&format!("{}~", file_b)));
+    assert!(at.file_exists(format!("{file_b}~")));
 }
 
 #[test]
@@ -1220,7 +1255,7 @@ fn test_install_backup_none() {
 
     assert!(at.file_exists(file_a));
     assert!(at.file_exists(file_b));
-    assert!(!at.file_exists(&format!("{}~", file_b)));
+    assert!(!at.file_exists(format!("{file_b}~")));
 }
 
 #[test]
@@ -1243,7 +1278,7 @@ fn test_install_backup_off() {
 
     assert!(at.file_exists(file_a));
     assert!(at.file_exists(file_b));
-    assert!(!at.file_exists(&format!("{}~", file_b)));
+    assert!(!at.file_exists(format!("{file_b}~")));
 }
 
 #[test]
@@ -1257,16 +1292,14 @@ fn test_install_missing_arguments() {
         .ucmd()
         .fails()
         .code_is(1)
-        .stderr_contains("install: missing file operand")
-        .stderr_contains("install --help' for more information.");
+        .usage_error("missing file operand");
 
     scene
         .ucmd()
         .arg("-D")
-        .arg(format!("-t {}", no_target_dir))
+        .arg(format!("-t {no_target_dir}"))
         .fails()
-        .stderr_contains("install: missing file operand")
-        .stderr_contains("install --help' for more information.");
+        .usage_error("missing file operand");
     assert!(!at.dir_exists(no_target_dir));
 }
 
@@ -1286,11 +1319,7 @@ fn test_install_missing_destination() {
         .ucmd()
         .arg(file_1)
         .fails()
-        .stderr_contains(format!(
-            "install: missing destination file operand after '{}'",
-            file_1
-        ))
-        .stderr_contains("install --help' for more information.");
+        .usage_error(format!("missing destination file operand after '{file_1}'"));
 
     // GNU's install will check for correct num of arguments and then fail
     // and it does not recognize, that the source is not a file but a directory.
@@ -1298,11 +1327,7 @@ fn test_install_missing_destination() {
         .ucmd()
         .arg(dir_1)
         .fails()
-        .stderr_contains(format!(
-            "install: missing destination file operand after '{}'",
-            dir_1
-        ))
-        .stderr_contains("install --help' for more information.");
+        .usage_error(format!("missing destination file operand after '{dir_1}'"));
 }
 
 #[test]
@@ -1380,6 +1405,100 @@ fn test_install_dir_req_verbose() {
 }
 
 #[test]
+fn test_install_chown_file_invalid() {
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+
+    let file_1 = "source_file1";
+    at.touch(file_1);
+
+    scene
+        .ucmd()
+        .arg("-o")
+        .arg("test_invalid_user")
+        .arg(file_1)
+        .arg("target_file1")
+        .fails()
+        .stderr_contains("install: invalid user: 'test_invalid_user'");
+
+    scene
+        .ucmd()
+        .arg("-g")
+        .arg("test_invalid_group")
+        .arg(file_1)
+        .arg("target_file1")
+        .fails()
+        .stderr_contains("install: invalid group: 'test_invalid_group'");
+
+    scene
+        .ucmd()
+        .arg("-o")
+        .arg("test_invalid_user")
+        .arg("-g")
+        .arg("test_invalid_group")
+        .arg(file_1)
+        .arg("target_file1")
+        .fails()
+        .stderr_contains("install: invalid user: 'test_invalid_user'");
+
+    scene
+        .ucmd()
+        .arg("-g")
+        .arg("test_invalid_group")
+        .arg("-o")
+        .arg("test_invalid_user")
+        .arg(file_1)
+        .arg("target_file1")
+        .fails()
+        .stderr_contains("install: invalid user: 'test_invalid_user'");
+}
+
+#[test]
+fn test_install_chown_directory_invalid() {
+    let scene = TestScenario::new(util_name!());
+
+    scene
+        .ucmd()
+        .arg("-o")
+        .arg("test_invalid_user")
+        .arg("-d")
+        .arg("dir1/dir2")
+        .fails()
+        .stderr_contains("install: invalid user: 'test_invalid_user'");
+
+    scene
+        .ucmd()
+        .arg("-g")
+        .arg("test_invalid_group")
+        .arg("-d")
+        .arg("dir1/dir2")
+        .fails()
+        .stderr_contains("install: invalid group: 'test_invalid_group'");
+
+    scene
+        .ucmd()
+        .arg("-o")
+        .arg("test_invalid_user")
+        .arg("-g")
+        .arg("test_invalid_group")
+        .arg("-d")
+        .arg("dir1/dir2")
+        .fails()
+        .stderr_contains("install: invalid user: 'test_invalid_user'");
+
+    scene
+        .ucmd()
+        .arg("-g")
+        .arg("test_invalid_group")
+        .arg("-o")
+        .arg("test_invalid_user")
+        .arg("-d")
+        .arg("dir1/dir2")
+        .fails()
+        .stderr_contains("install: invalid user: 'test_invalid_user'");
+}
+
+#[test]
 fn test_install_compare_option() {
     let scene = TestScenario::new(util_name!());
     let at = &scene.fixtures;
@@ -1390,7 +1509,7 @@ fn test_install_compare_option() {
         .ucmd()
         .args(&["-Cv", first, second])
         .succeeds()
-        .stdout_contains(format!("'{}' -> '{}'", first, second));
+        .stdout_contains(format!("'{first}' -> '{second}'"));
     scene
         .ucmd()
         .args(&["-Cv", first, second])
@@ -1400,12 +1519,12 @@ fn test_install_compare_option() {
         .ucmd()
         .args(&["-Cv", "-m0644", first, second])
         .succeeds()
-        .stdout_contains(format!("removed '{}'\n'{}' -> '{}'", second, first, second));
+        .stdout_contains(format!("removed '{second}'\n'{first}' -> '{second}'"));
     scene
         .ucmd()
         .args(&["-Cv", first, second])
         .succeeds()
-        .stdout_contains(format!("removed '{}'\n'{}' -> '{}'", second, first, second));
+        .stdout_contains(format!("removed '{second}'\n'{first}' -> '{second}'"));
     scene
         .ucmd()
         .args(&["-C", "--preserve-timestamps", first, second])

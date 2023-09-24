@@ -1,7 +1,7 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 // spell-checker:ignore zaaa zaab
 //! A number in arbitrary radix expressed in a positional notation.
 //!
@@ -200,10 +200,10 @@ impl FixedWidthNumber {
                 break;
             }
         }
-        if suffix_start != 0 {
-            Err(Overflow)
-        } else {
+        if suffix_start == 0 {
             Ok(Self { radix, digits })
+        } else {
+            Err(Overflow)
         }
     }
 
@@ -245,7 +245,7 @@ impl Display for FixedWidthNumber {
             .iter()
             .map(|d| map_digit(self.radix, *d))
             .collect();
-        write!(f, "{}", digits)
+        write!(f, "{digits}")
     }
 }
 

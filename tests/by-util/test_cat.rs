@@ -1,6 +1,12 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 // spell-checker:ignore NOFILE
 
-use crate::common::util::*;
+#[cfg(not(windows))]
+use crate::common::util::vec_of_size;
+use crate::common::util::TestScenario;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use rlimit::Resource;
 use std::fs::OpenOptions;
@@ -103,7 +109,7 @@ fn test_closes_file_descriptors() {
             "alpha.txt",
             "alpha.txt",
         ])
-        .with_limit(Resource::NOFILE, 9, 9)
+        .limit(Resource::NOFILE, 9, 9)
         .succeeds();
 }
 
@@ -182,7 +188,7 @@ fn test_directory() {
     s.ucmd()
         .args(&["test_directory"])
         .fails()
-        .stderr_is("cat: test_directory: Is a directory");
+        .stderr_is("cat: test_directory: Is a directory\n");
 }
 
 #[test]
@@ -194,7 +200,7 @@ fn test_directory_and_file() {
         s.ucmd()
             .args(&["test_directory2", fixture])
             .fails()
-            .stderr_is("cat: test_directory2: Is a directory")
+            .stderr_is("cat: test_directory2: Is a directory\n")
             .stdout_is_fixture(fixture);
     }
 }
@@ -527,7 +533,7 @@ fn test_write_to_self() {
         .arg("second_file")
         .fails()
         .code_is(2)
-        .stderr_only("cat: first_file: input file is output file\ncat: first_file: input file is output file");
+        .stderr_only("cat: first_file: input file is output file\ncat: first_file: input file is output file\n");
 
     assert_eq!(
         s.fixtures.read("first_file"),

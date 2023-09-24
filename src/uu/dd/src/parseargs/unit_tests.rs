@@ -1,3 +1,7 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 // spell-checker:ignore fname, tname, fpath, specfile, testfile, unspec, ifile, ofile, outfile, fullblock, urand, fileio, atoe, atoibm, behaviour, bmax, bremain, btotal, cflags, creat, ctable, ctty, datastructures, doesnt, etoa, fileout, fname, gnudd, iconvflags, iseek, nocache, noctty, noerror, nofollow, nolinks, nonblock, oconvflags, oseek, outfile, parseargs, rlen, rmax, rposition, rremain, rsofar, rstat, sigusr, sigval, wlen, wstat, oconv
 
 use super::*;
@@ -55,30 +59,29 @@ fn unimplemented_flags_should_error() {
     let mut succeeded = Vec::new();
 
     // The following flags are not implemented
-    for flag in ["cio", "nocache", "nolinks", "text", "binary"] {
-        let args = vec![format!("iflag={}", flag)];
+    for flag in ["cio", "nolinks", "text", "binary"] {
+        let args = vec![format!("iflag={flag}")];
 
         if Parser::new()
             .parse(&args.iter().map(AsRef::as_ref).collect::<Vec<_>>()[..])
             .is_ok()
         {
-            succeeded.push(format!("iflag={}", flag));
+            succeeded.push(format!("iflag={flag}"));
         }
 
-        let args = vec![format!("oflag={}", flag)];
+        let args = vec![format!("oflag={flag}")];
 
         if Parser::new()
             .parse(&args.iter().map(AsRef::as_ref).collect::<Vec<_>>()[..])
             .is_ok()
         {
-            succeeded.push(format!("iflag={}", flag));
+            succeeded.push(format!("iflag={flag}"));
         }
     }
 
     assert!(
         succeeded.is_empty(),
-        "The following flags did not panic as expected: {:?}",
-        succeeded
+        "The following flags did not panic as expected: {succeeded:?}"
     );
 }
 

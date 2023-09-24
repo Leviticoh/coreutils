@@ -1,8 +1,5 @@
 // This file is part of the uutils coreutils package.
 //
-// (c) Alan Andrade <alan.andradec@gmail.com>
-// (c) Jian Zeng <anonymousknight96 AT gmail.com>
-//
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 //
@@ -21,7 +18,7 @@ use uucore::{
     display::Quotable,
     entries::{get_groups_gnu, gid2grp, Locate, Passwd},
     error::{UError, UResult},
-    format_usage, show,
+    format_usage, help_about, help_usage, show,
 };
 
 use clap::{crate_version, Arg, ArgAction, Command};
@@ -29,11 +26,8 @@ use clap::{crate_version, Arg, ArgAction, Command};
 mod options {
     pub const USERS: &str = "USERNAME";
 }
-static ABOUT: &str = "Print group memberships for each USERNAME or, \
-                      if no USERNAME is specified, for\nthe current process \
-                      (which may differ if the groups data‐base has changed).";
-
-const USAGE: &str = "{} [OPTION]... [USERNAME]...";
+const ABOUT: &str = help_about!("groups.md");
+const USAGE: &str = help_usage!("groups.md");
 
 #[derive(Debug)]
 enum GroupsError {
@@ -49,7 +43,7 @@ impl Display for GroupsError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::GetGroupsFailed => write!(f, "failed to fetch groups"),
-            Self::GroupNotFound(gid) => write!(f, "cannot find name for group ID {}", gid),
+            Self::GroupNotFound(gid) => write!(f, "cannot find name for group ID {gid}"),
             Self::UserNotFound(user) => write!(f, "{}: no such user", user.quote()),
         }
     }

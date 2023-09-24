@@ -1,3 +1,7 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 //! UnescapedText is a tokenizer impl
 //! for tokenizing character literals,
 //! and escaped character literals (of allowed escapes),
@@ -88,12 +92,9 @@ impl UnescapedText {
         } else {
             4
         };
-        let err_msg = format!(
-            "invalid universal character name {0}{1:02$x}",
-            preface, val, leading_zeros
-        );
+        let err_msg = format!("invalid universal character name {preface}{val:0leading_zeros$x}");
         if (val < 159 && (val != 36 && val != 64 && val != 96)) || (val > 55296 && val < 57343) {
-            println!("{}", err_msg); //todo stderr
+            println!("{err_msg}"); //todo stderr
             exit(EXIT_ERR);
         }
     }
@@ -138,13 +139,13 @@ impl UnescapedText {
                     }
                     _ => {}
                 }
-                if !ignore {
+                if ignore {
+                    byte_vec.push(ch as u8);
+                } else {
                     let val = (Self::base_to_u32(min_len, max_len, base, it) % 256) as u8;
                     byte_vec.push(val);
                     let bvec = [val];
                     flush_bytes(writer, &bvec);
-                } else {
-                    byte_vec.push(ch as u8);
                 }
             }
             e => {
@@ -200,6 +201,7 @@ impl UnescapedText {
     // and return a wrapper around a Vec<u8> of unescaped bytes
     // break on encounter of sub symbol ('%[^%]') unless called
     // through %b subst.
+    #[allow(clippy::cognitive_complexity)]
     pub fn from_it_core<W>(
         writer: &mut W,
         it: &mut PutBackN<Chars>,

@@ -1,3 +1,7 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 use std::ffi::OsString;
 use std::fmt::{Display, Formatter, Write};
 use std::io;
@@ -77,11 +81,11 @@ pub(crate) fn write_full_error<W>(writer: &mut W, err: &dyn std::error::Error) -
 where
     W: Write,
 {
-    write!(writer, "{}", err)?;
+    write!(writer, "{err}")?;
     let mut err = err;
     while let Some(source) = err.source() {
         err = source;
-        write!(writer, ": {}", err)?;
+        write!(writer, ": {err}")?;
     }
     write!(writer, ".")?;
     Ok(())

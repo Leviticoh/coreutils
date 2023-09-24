@@ -1,3 +1,7 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Radix {
     Decimal,
@@ -50,7 +54,7 @@ impl InputOffset {
             (Radix::Octal, None) => format!("{:07o}", self.byte_pos),
             (Radix::Octal, Some(l)) => format!("{:07o} ({:07o})", self.byte_pos, l),
             (Radix::NoPrefix, None) => String::new(),
-            (Radix::NoPrefix, Some(l)) => format!("({:07o})", l),
+            (Radix::NoPrefix, Some(l)) => format!("({l:07o})"),
         }
     }
 

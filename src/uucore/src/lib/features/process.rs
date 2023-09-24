@@ -1,10 +1,7 @@
 // This file is part of the uutils coreutils package.
 //
-// (c) Maciej Dziardziel <fiedzia@gmail.com>
-// (c) Jian Zeng <anonymousknight96 AT gmail.com>
-//
-// For the full copyright and license information, please view the LICENSE file
-// that was distributed with this source code.
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 // spell-checker:ignore (vars) cvar exitstatus
 // spell-checker:ignore (sys/unix) WIFSIGNALED
@@ -48,6 +45,9 @@ pub trait ChildExt {
     /// send the signal to an unrelated process that recycled the PID.
     fn send_signal(&mut self, signal: usize) -> io::Result<()>;
 
+    /// Send a signal to a process group.
+    fn send_signal_group(&mut self, signal: usize) -> io::Result<()>;
+
     /// Wait for a process to finish or return after the specified duration.
     /// A `timeout` of zero disables the timeout.
     fn wait_or_timeout(&mut self, timeout: Duration) -> io::Result<Option<ExitStatus>>;
@@ -55,10 +55,22 @@ pub trait ChildExt {
 
 impl ChildExt for Child {
     fn send_signal(&mut self, signal: usize) -> io::Result<()> {
-        if unsafe { libc::kill(self.id() as pid_t, signal as i32) } != 0 {
-            Err(io::Error::last_os_error())
-        } else {
+        if unsafe { libc::kill(self.id() as pid_t, signal as i32) } == 0 {
             Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+
+    fn send_signal_group(&mut self, signal: usize) -> io::Result<()> {
+        // Ignore the signal, so we don't go into a signal loop.
+        if unsafe { libc::signal(signal as i32, libc::SIG_IGN) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if unsafe { libc::kill(0, signal as i32) } == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
         }
     }
 

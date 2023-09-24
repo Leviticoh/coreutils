@@ -1,11 +1,9 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
-extern crate regex;
-
-use crate::common::util::*;
+use crate::common::util::{expected_result, TestScenario};
 
 #[test]
 fn test_invalid_arg() {
@@ -53,8 +51,8 @@ fn test_terse_normal_format() {
     let ts = TestScenario::new(util_name!());
     let actual = ts.ucmd().args(&args).succeeds().stdout_move_str();
     let expect = unwrap_or_return!(expected_result(&ts, &args)).stdout_move_str();
-    println!("actual: {:?}", actual);
-    println!("expect: {:?}", expect);
+    println!("actual: {actual:?}");
+    println!("expect: {expect:?}");
     let v_actual: Vec<&str> = actual.trim().split(' ').collect();
     let mut v_expect: Vec<&str> = expect.trim().split(' ').collect();
     assert!(!v_expect.is_empty());
@@ -83,8 +81,8 @@ fn test_format_created_time() {
     let ts = TestScenario::new(util_name!());
     let actual = ts.ucmd().args(&args).succeeds().stdout_move_str();
     let expect = unwrap_or_return!(expected_result(&ts, &args)).stdout_move_str();
-    println!("actual: {:?}", actual);
-    println!("expect: {:?}", expect);
+    println!("actual: {actual:?}");
+    println!("expect: {expect:?}");
     // note: using a regex instead of `split_whitespace()` in order to detect whitespace differences
     let re = regex::Regex::new(r"\s").unwrap();
     let v_actual: Vec<&str> = re.split(&actual).collect();
@@ -108,8 +106,8 @@ fn test_format_created_seconds() {
     let ts = TestScenario::new(util_name!());
     let actual = ts.ucmd().args(&args).succeeds().stdout_move_str();
     let expect = unwrap_or_return!(expected_result(&ts, &args)).stdout_move_str();
-    println!("actual: {:?}", actual);
-    println!("expect: {:?}", expect);
+    println!("actual: {actual:?}");
+    println!("expect: {expect:?}");
     // note: using a regex instead of `split_whitespace()` in order to detect whitespace differences
     let re = regex::Regex::new(r"\s").unwrap();
     let v_actual: Vec<&str> = re.split(&actual).collect();
@@ -180,7 +178,7 @@ fn test_char() {
         DEV_FORMAT_STR,
         #[cfg(target_os = "linux")]
         "/dev/pts/ptmx",
-        #[cfg(any(target_vendor = "apple"))]
+        #[cfg(target_vendor = "apple")]
         "%a %A %b %B %d %D %f %F %g %G %h %i %m %n %o %s (/%T) %u %U %W %X %y %Y %z %Z",
         #[cfg(any(target_os = "android", target_vendor = "apple"))]
         "/dev/ptmx",
@@ -200,7 +198,7 @@ fn test_date() {
         "%z",
         #[cfg(target_os = "linux")]
         "/bin/sh",
-        #[cfg(any(target_vendor = "apple"))]
+        #[cfg(target_vendor = "apple")]
         "%z",
         #[cfg(any(target_os = "android", target_vendor = "apple"))]
         "/bin/sh",
@@ -215,7 +213,7 @@ fn test_date() {
         "%z",
         #[cfg(target_os = "linux")]
         "/dev/ptmx",
-        #[cfg(any(target_vendor = "apple"))]
+        #[cfg(target_vendor = "apple")]
         "%z",
         #[cfg(any(target_os = "android", target_vendor = "apple"))]
         "/dev/ptmx",
@@ -304,6 +302,19 @@ fn test_stdin_pipe_fifo2() {
         .stdout_contains("character special file")
         .stdout_contains("File: -")
         .succeeded();
+}
+
+#[test]
+#[cfg(all(unix, not(target_os = "android")))]
+fn test_stdin_with_fs_option() {
+    // $ stat -f -
+    new_ucmd!()
+        .arg("-f")
+        .arg("-")
+        .set_stdin(std::process::Stdio::null())
+        .fails()
+        .code_is(1)
+        .stderr_contains("using '-' to denote standard input does not work in file system mode");
 }
 
 #[test]

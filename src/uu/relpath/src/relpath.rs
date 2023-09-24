@@ -1,9 +1,7 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * (c) 2014 Vsevolod Velichko <torkvemada@sorokdva.net>
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 // spell-checker:ignore (ToDO) subpath absto absfrom absbase
 
@@ -12,12 +10,11 @@ use std::env;
 use std::path::{Path, PathBuf};
 use uucore::display::println_verbatim;
 use uucore::error::{FromIo, UResult};
-use uucore::format_usage;
 use uucore::fs::{canonicalize, MissingHandling, ResolveMode};
+use uucore::{format_usage, help_about, help_usage};
 
-static ABOUT: &str = "Convert TO destination to the relative path from the FROM dir.
-If FROM path is omitted, current working dir will be used.";
-const USAGE: &str = "{} [-d DIR] TO [FROM]";
+const USAGE: &str = help_usage!("relpath.md");
+const ABOUT: &str = help_about!("relpath.md");
 
 mod options {
     pub const DIR: &str = "DIR";
@@ -85,6 +82,10 @@ pub fn uu_app() -> Command {
         .arg(Arg::new(options::DIR).short('d').help(
             "If any of FROM and TO is not subpath of DIR, output absolute path instead of relative",
         ))
-        .arg(Arg::new(options::TO).value_hint(clap::ValueHint::AnyPath))
+        .arg(
+            Arg::new(options::TO)
+                .value_hint(clap::ValueHint::AnyPath)
+                .required(true),
+        )
         .arg(Arg::new(options::FROM).value_hint(clap::ValueHint::AnyPath))
 }

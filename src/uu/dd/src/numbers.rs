@@ -1,7 +1,7 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 /// Functions for formatting a number as a magnitude and a unit suffix.
 
 /// The first ten powers of 1024.
@@ -80,7 +80,7 @@ pub(crate) fn to_magnitude_and_suffix(n: u128, suffix_type: SuffixType) -> Strin
     //
     let quotient = (n as f64) / (base as f64);
     if quotient < 10.0 {
-        format!("{:.1} {}", quotient, suffix)
+        format!("{quotient:.1} {suffix}")
     } else {
         format!("{} {}", quotient.round(), suffix)
     }

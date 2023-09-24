@@ -1,3 +1,7 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 // spell-checker:ignore formatteriteminfo blocksize thisblock
 
 use std::cmp;
@@ -139,7 +143,7 @@ impl OutputInfo {
     /// ```
     ///
     /// This algorithm assumes the size of all types is a power of 2 (1, 2, 4, 8, 16, ...)
-    /// Increase MAX_BYTES_PER_UNIT to allow larger types.
+    /// Increase `MAX_BYTES_PER_UNIT` to allow larger types.
     fn calculate_alignment(
         sf: &dyn TypeSizeInfo,
         byte_size_block: usize,

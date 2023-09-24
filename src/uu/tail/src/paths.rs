@@ -1,11 +1,12 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 // spell-checker:ignore tailable seekable stdlib (stdlib)
 
 use crate::text;
+use std::ffi::OsStr;
 use std::fs::{File, Metadata};
 use std::io::{Seek, SeekFrom};
 #[cfg(unix)]
@@ -19,6 +20,28 @@ pub enum InputKind {
     Stdin,
 }
 
+#[cfg(unix)]
+impl From<&OsStr> for InputKind {
+    fn from(value: &OsStr) -> Self {
+        if value == OsStr::new("-") {
+            Self::Stdin
+        } else {
+            Self::File(PathBuf::from(value))
+        }
+    }
+}
+
+#[cfg(not(unix))]
+impl From<&OsStr> for InputKind {
+    fn from(value: &OsStr) -> Self {
+        if value == OsStr::new(text::DASH) {
+            Self::Stdin
+        } else {
+            Self::File(PathBuf::from(value))
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Input {
     kind: InputKind,
@@ -26,23 +49,13 @@ pub struct Input {
 }
 
 impl Input {
-    // TODO: from &str may be the better choice
-    pub fn from(string: String) -> Self {
-        let kind = if string == text::DASH {
-            InputKind::Stdin
-        } else {
-            InputKind::File(PathBuf::from(&string))
-        };
+    pub fn from<T: AsRef<OsStr>>(string: T) -> Self {
+        let string = string.as_ref();
 
+        let kind = string.into();
         let display_name = match kind {
-            InputKind::File(_) => string,
-            InputKind::Stdin => {
-                if cfg!(unix) {
-                    text::STDIN_HEADER.to_string()
-                } else {
-                    string
-                }
-            }
+            InputKind::File(_) => string.to_string_lossy().to_string(),
+            InputKind::Stdin => text::STDIN_HEADER.to_string(),
         };
 
         Self { kind, display_name }
@@ -132,7 +145,7 @@ impl FileExtTail for File {
     /// Test if File is seekable.
     /// Set the current position offset to `current_offset`.
     fn is_seekable(&mut self, current_offset: u64) -> bool {
-        self.seek(SeekFrom::Current(0)).is_ok()
+        self.stream_position().is_ok()
             && self.seek(SeekFrom::End(0)).is_ok()
             && self.seek(SeekFrom::Start(current_offset)).is_ok()
     }

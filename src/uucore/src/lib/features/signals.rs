@@ -1,13 +1,16 @@
 // This file is part of the uutils coreutils package.
 //
-// (c) Maciej Dziardziel <fiedzia@gmail.com>
-//
-// For the full copyright and license information, please view the LICENSE file
-// that was distributed with this source code.
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 // spell-checker:ignore (vars/api) fcntl setrlimit setitimer
 // spell-checker:ignore (vars/signals) ABRT ALRM CHLD SEGV SIGABRT SIGALRM SIGBUS SIGCHLD SIGCONT SIGEMT SIGFPE SIGHUP SIGILL SIGINFO SIGINT SIGIO SIGIOT SIGKILL SIGPIPE SIGPROF SIGPWR SIGQUIT SIGSEGV SIGSTOP SIGSYS SIGTERM SIGTRAP SIGTSTP SIGTHR SIGTTIN SIGTTOU SIGURG SIGUSR SIGVTALRM SIGWINCH SIGXCPU SIGXFSZ STKFLT PWR THR TSTP TTIN TTOU VTALRM XCPU XFSZ
-
+#[cfg(unix)]
+use nix::errno::Errno;
+#[cfg(unix)]
+use nix::sys::signal::{
+    signal, SigHandler::SigDfl, SigHandler::SigIgn, Signal::SIGINT, Signal::SIGPIPE,
+};
 pub static DEFAULT_SIGNAL: usize = 15;
 
 /*
@@ -196,6 +199,19 @@ pub fn signal_name_by_value(signal_value: usize) -> Option<&'static str> {
     ALL_SIGNALS.get(signal_value).copied()
 }
 
+#[cfg(unix)]
+pub fn enable_pipe_errors() -> Result<(), Errno> {
+    // We pass the error as is, the return value would just be Ok(SigDfl), so we can safely ignore it.
+    // SAFETY: this function is safe as long as we do not use a custom SigHandler -- we use the default one.
+    unsafe { signal(SIGPIPE, SigDfl) }.map(|_| ())
+}
+#[cfg(unix)]
+pub fn ignore_interrupts() -> Result<(), Errno> {
+    // We pass the error as is, the return value would just be Ok(SigIgn), so we can safely ignore it.
+    // SAFETY: this function is safe as long as we do not use a custom SigHandler -- we use the default one.
+    unsafe { signal(SIGINT, SigIgn) }.map(|_| ())
+}
+
 #[test]
 fn signal_by_value() {
     assert_eq!(signal_by_name_or_value("0"), Some(0));
@@ -215,7 +231,7 @@ fn signal_by_short_name() {
 fn signal_by_long_name() {
     for (value, signal) in ALL_SIGNALS.iter().enumerate() {
         assert_eq!(
-            signal_by_name_or_value(&format!("SIG{}", signal)),
+            signal_by_name_or_value(&format!("SIG{signal}")),
             Some(value)
         );
     }

@@ -1,3 +1,7 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 use uucore::parse_size::{parse_size, ParseSizeError};
 
 pub fn parse_number_of_bytes(s: &str) -> Result<u64, ParseSizeError> {
@@ -20,11 +24,11 @@ pub fn parse_number_of_bytes(s: &str) -> Result<u64, ParseSizeError> {
             multiply = 512;
             len -= 1;
         }
-        Some('k') | Some('K') => {
+        Some('k' | 'K') => {
             multiply = 1024;
             len -= 1;
         }
-        Some('m') | Some('M') => {
+        Some('m' | 'M') => {
             multiply = 1024 * 1024;
             len -= 1;
         }
@@ -43,15 +47,15 @@ pub fn parse_number_of_bytes(s: &str) -> Result<u64, ParseSizeError> {
             len -= 1;
         }
         #[cfg(target_pointer_width = "64")]
-        Some('E') => {
+        Some('E') if radix != 16 => {
             multiply = 1024 * 1024 * 1024 * 1024 * 1024 * 1024;
             len -= 1;
         }
         Some('B') if radix != 16 => {
             len -= 2;
             multiply = match ends_with.next() {
-                Some('k') | Some('K') => 1000,
-                Some('m') | Some('M') => 1000 * 1000,
+                Some('k' | 'K') => 1000,
+                Some('m' | 'M') => 1000 * 1000,
                 Some('G') => 1000 * 1000 * 1000,
                 #[cfg(target_pointer_width = "64")]
                 Some('T') => 1000 * 1000 * 1000 * 1000,
@@ -84,6 +88,7 @@ fn test_parse_number_of_bytes() {
 
     // hex input
     assert_eq!(15, parse_number_of_bytes("0xf").unwrap());
+    assert_eq!(14, parse_number_of_bytes("0XE").unwrap());
     assert_eq!(15, parse_number_of_bytes("0XF").unwrap());
     assert_eq!(27, parse_number_of_bytes("0x1b").unwrap());
     assert_eq!(16 * 1024, parse_number_of_bytes("0x10k").unwrap());

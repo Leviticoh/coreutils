@@ -1,10 +1,7 @@
 // This file is part of the uutils coreutils package.
 //
-// (c) Fangxu Hu <framlog@gmail.com>
-// (c) Sylvestre Ledru <sylvestre@debian.org>
-//
-// For the full copyright and license information, please view the LICENSE file
-// that was distributed with this source code.
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 // spell-checker:ignore itotal iused iavail ipcent pcent tmpfs squashfs lofs
 mod blocks;
 mod columns;
@@ -19,7 +16,7 @@ use uucore::error::FromIo;
 use uucore::error::{UError, UResult, USimpleError};
 use uucore::fsext::{read_fs_list, MountInfo};
 use uucore::parse_size::ParseSizeError;
-use uucore::{format_usage, show};
+use uucore::{format_usage, help_about, help_section, help_usage, show};
 
 use clap::{crate_version, parser::ValueSource, Arg, ArgAction, ArgMatches, Command};
 
@@ -33,16 +30,9 @@ use crate::columns::{Column, ColumnError};
 use crate::filesystem::Filesystem;
 use crate::table::Table;
 
-static ABOUT: &str = "Show information about the file system on which each FILE resides,\n\
-                      or all file systems by default.";
-const USAGE: &str = "{} [OPTION]... [FILE]...";
-const LONG_HELP: &str = "Display values are in units of the first available SIZE from --block-size,
-and the DF_BLOCK_SIZE, BLOCK_SIZE and BLOCKSIZE environment variables.
-Otherwise, units default to 1024 bytes (or 512 if POSIXLY_CORRECT is set).
-
-SIZE is an integer and optional unit (example: 10M is 10*1024*1024).
-Units are K, M, G, T, P, E, Z, Y (powers of 1024) or KB, MB,... (powers
-of 1000).";
+const ABOUT: &str = help_about!("df.md");
+const USAGE: &str = help_usage!("df.md");
+const AFTER_HELP: &str = help_section!("after help", "df.md");
 
 static OPT_HELP: &str = "help";
 static OPT_ALL: &str = "all";
@@ -105,11 +95,11 @@ impl Default for Options {
         Self {
             show_local_fs: Default::default(),
             show_all_fs: Default::default(),
-            block_size: Default::default(),
-            human_readable: Default::default(),
-            header_mode: Default::default(),
-            include: Default::default(),
-            exclude: Default::default(),
+            block_size: BlockSize::default(),
+            human_readable: Option::default(),
+            header_mode: HeaderMode::default(),
+            include: Option::default(),
+            exclude: Option::default(),
             sync: Default::default(),
             show_total: Default::default(),
             columns: vec![
@@ -146,10 +136,10 @@ impl fmt::Display for OptionsError {
             }
             // TODO This needs to vary based on whether `--block-size`
             // or `-B` were provided.
-            Self::InvalidBlockSize(s) => write!(f, "invalid --block-size argument {}", s),
+            Self::InvalidBlockSize(s) => write!(f, "invalid --block-size argument {s}"),
             // TODO This needs to vary based on whether `--block-size`
             // or `-B` were provided.
-            Self::InvalidSuffix(s) => write!(f, "invalid suffix in --block-size argument {}", s),
+            Self::InvalidSuffix(s) => write!(f, "invalid suffix in --block-size argument {s}"),
             Self::ColumnError(ColumnError::MultipleColumns(s)) => write!(
                 f,
                 "option --output: field {} used more than once",
@@ -240,7 +230,7 @@ impl Options {
             }
         }
 
-        (!intersected_types.is_empty()).then(|| intersected_types)
+        (!intersected_types.is_empty()).then_some(intersected_types)
     }
 }
 
@@ -487,7 +477,7 @@ pub fn uu_app() -> Command {
         .version(crate_version!())
         .about(ABOUT)
         .override_usage(format_usage(USAGE))
-        .after_help(LONG_HELP)
+        .after_help(AFTER_HELP)
         .infer_long_args(true)
         .disable_help_flag(true)
         .arg(
@@ -753,7 +743,7 @@ mod tests {
 
         #[test]
         fn test_remote_included() {
-            let opt = Default::default();
+            let opt = Options::default();
             let m = mount_info("ext4", "/mnt/foo", true, false);
             assert!(is_included(&m, &opt));
         }
@@ -780,7 +770,7 @@ mod tests {
 
         #[test]
         fn test_dummy_excluded() {
-            let opt = Default::default();
+            let opt = Options::default();
             let m = mount_info("ext4", "/mnt/foo", false, true);
             assert!(!is_included(&m, &opt));
         }
@@ -871,11 +861,11 @@ mod tests {
 
     mod filter_mount_list {
 
-        use crate::filter_mount_list;
+        use crate::{filter_mount_list, Options};
 
         #[test]
         fn test_empty() {
-            let opt = Default::default();
+            let opt = Options::default();
             let mount_infos = vec![];
             assert!(filter_mount_list(mount_infos, &opt).is_empty());
         }

@@ -1,11 +1,9 @@
 // This file is part of the uutils coreutils package.
 //
-// (c) Jeremiah Peschka <jeremiah.peschka@gmail.com>
-//
-// For the full copyright and license information, please view the LICENSE file
-// that was distributed with this source code.
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
-// spell-checker:ignore (ToDO) cpio svgz webm somegroup nlink rmvb xspf tabsize dired
+// spell-checker:ignore (ToDO) cpio svgz webm somegroup nlink rmvb xspf tabsize dired subdired
 
 use clap::{
     builder::{NonEmptyStringValueParser, ValueParser},
@@ -14,8 +12,9 @@ use clap::{
 use glob::{MatchOptions, Pattern};
 use lscolors::LsColors;
 use number_prefix::NumberPrefix;
-use once_cell::unsync::OnceCell;
-use std::collections::HashSet;
+use std::{cell::OnceCell, num::IntErrorKind};
+use std::{collections::HashSet, io::IsTerminal};
+
 #[cfg(windows)]
 use std::os::windows::fs::MetadataExt;
 use std::{
@@ -40,11 +39,18 @@ use unicode_width::UnicodeWidthStr;
     target_os = "linux",
     target_os = "macos",
     target_os = "android",
-    target_os = "ios"
+    target_os = "ios",
+    target_os = "freebsd",
+    target_os = "dragonfly",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "illumos",
+    target_os = "solaris"
 ))]
 use uucore::libc::{dev_t, major, minor};
 #[cfg(unix)]
 use uucore::libc::{S_IXGRP, S_IXOTH, S_IXUSR};
+use uucore::line_ending::LineEnding;
 use uucore::quoting_style::{escape_name, QuotingStyle};
 use uucore::{
     display::Quotable,
@@ -54,17 +60,17 @@ use uucore::{
     parse_size::parse_size,
     version_cmp::version_cmp,
 };
-use uucore::{parse_glob, show, show_error, show_warning};
-
+use uucore::{help_about, help_section, help_usage, parse_glob, show, show_error, show_warning};
+mod dired;
+use dired::DiredOutput;
 #[cfg(not(feature = "selinux"))]
 static CONTEXT_HELP_TEXT: &str = "print any security context of each file (not enabled)";
 #[cfg(feature = "selinux")]
 static CONTEXT_HELP_TEXT: &str = "print any security context of each file";
 
-const ABOUT: &str = r#"List directory contents.
-Ignore files and directories starting with a '.' by default"#;
-
-const USAGE: &str = "{} [OPTION]... [FILE]...";
+const ABOUT: &str = help_about!("ls.md");
+const AFTER_HELP: &str = help_section!("after help", "ls.md");
+const USAGE: &str = help_usage!("ls.md");
 
 pub mod options {
     pub mod format {
@@ -162,6 +168,7 @@ enum LsError {
     IOError(std::io::Error),
     IOErrorContext(std::io::Error, PathBuf, bool),
     BlockSizeParseError(String),
+    ConflictingArgumentDired(),
     AlreadyListedError(PathBuf),
     TimeStyleParseError(String, Vec<String>),
 }
@@ -174,6 +181,7 @@ impl UError for LsError {
             Self::IOErrorContext(_, _, false) => 1,
             Self::IOErrorContext(_, _, true) => 2,
             Self::BlockSizeParseError(_) => 1,
+            Self::ConflictingArgumentDired() => 1,
             Self::AlreadyListedError(_) => 2,
             Self::TimeStyleParseError(_, _) => 1,
         }
@@ -188,6 +196,10 @@ impl Display for LsError {
             Self::BlockSizeParseError(s) => {
                 write!(f, "invalid --block-size argument {}", s.quote())
             }
+            Self::ConflictingArgumentDired() => {
+                write!(f, "--dired requires --format=long")
+            }
+
             Self::TimeStyleParseError(s, possible_time_styles) => {
                 write!(
                     f,
@@ -197,7 +209,7 @@ impl Display for LsError {
                 )
             }
             Self::InvalidLineWidth(s) => write!(f, "invalid line width: {}", s.quote()),
-            Self::IOError(e) => write!(f, "general io error: {}", e),
+            Self::IOError(e) => write!(f, "general io error: {e}"),
             Self::IOErrorContext(e, p, _) => {
                 let error_kind = e.kind();
                 let errno = e.raw_os_error().unwrap_or(1i32);
@@ -288,6 +300,7 @@ enum Sort {
     Time,
     Version,
     Extension,
+    Width,
 }
 
 #[derive(PartialEq)]
@@ -399,7 +412,8 @@ pub struct Config {
     context: bool,
     selinux_supported: bool,
     group_directories_first: bool,
-    eol: char,
+    line_ending: LineEnding,
+    dired: bool,
 }
 
 // Fields that can be removed or added to the long format
@@ -426,36 +440,251 @@ struct PaddingCollection {
     block_size: usize,
 }
 
+/// Extracts the format to display the information based on the options provided.
+///
+/// # Returns
+///
+/// A tuple containing the Format variant and an Option containing a &'static str
+/// which corresponds to the option used to define the format.
+fn extract_format(options: &clap::ArgMatches) -> (Format, Option<&'static str>) {
+    if let Some(format_) = options.get_one::<String>(options::FORMAT) {
+        (
+            match format_.as_str() {
+                "long" | "verbose" => Format::Long,
+                "single-column" => Format::OneLine,
+                "columns" | "vertical" => Format::Columns,
+                "across" | "horizontal" => Format::Across,
+                "commas" => Format::Commas,
+                // below should never happen as clap already restricts the values.
+                _ => unreachable!("Invalid field for --format"),
+            },
+            Some(options::FORMAT),
+        )
+    } else if options.get_flag(options::format::LONG) {
+        (Format::Long, Some(options::format::LONG))
+    } else if options.get_flag(options::format::ACROSS) {
+        (Format::Across, Some(options::format::ACROSS))
+    } else if options.get_flag(options::format::COMMAS) {
+        (Format::Commas, Some(options::format::COMMAS))
+    } else if options.get_flag(options::format::COLUMNS) {
+        (Format::Columns, Some(options::format::COLUMNS))
+    } else if std::io::stdout().is_terminal() {
+        (Format::Columns, None)
+    } else {
+        (Format::OneLine, None)
+    }
+}
+
+/// Extracts the type of files to display
+///
+/// # Returns
+///
+/// A Files variant representing the type of files to display.
+fn extract_files(options: &clap::ArgMatches) -> Files {
+    if options.get_flag(options::files::ALL) {
+        Files::All
+    } else if options.get_flag(options::files::ALMOST_ALL) {
+        Files::AlmostAll
+    } else {
+        Files::Normal
+    }
+}
+
+/// Extracts the sorting method to use based on the options provided.
+///
+/// # Returns
+///
+/// A Sort variant representing the sorting method to use.
+fn extract_sort(options: &clap::ArgMatches) -> Sort {
+    if let Some(field) = options.get_one::<String>(options::SORT) {
+        match field.as_str() {
+            "none" => Sort::None,
+            "name" => Sort::Name,
+            "time" => Sort::Time,
+            "size" => Sort::Size,
+            "version" => Sort::Version,
+            "extension" => Sort::Extension,
+            "width" => Sort::Width,
+            // below should never happen as clap already restricts the values.
+            _ => unreachable!("Invalid field for --sort"),
+        }
+    } else if options.get_flag(options::sort::TIME) {
+        Sort::Time
+    } else if options.get_flag(options::sort::SIZE) {
+        Sort::Size
+    } else if options.get_flag(options::sort::NONE) {
+        Sort::None
+    } else if options.get_flag(options::sort::VERSION) {
+        Sort::Version
+    } else if options.get_flag(options::sort::EXTENSION) {
+        Sort::Extension
+    } else {
+        Sort::Name
+    }
+}
+
+/// Extracts the time to use based on the options provided.
+///
+/// # Returns
+///
+/// A Time variant representing the time to use.
+fn extract_time(options: &clap::ArgMatches) -> Time {
+    if let Some(field) = options.get_one::<String>(options::TIME) {
+        match field.as_str() {
+            "ctime" | "status" => Time::Change,
+            "access" | "atime" | "use" => Time::Access,
+            "birth" | "creation" => Time::Birth,
+            // below should never happen as clap already restricts the values.
+            _ => unreachable!("Invalid field for --time"),
+        }
+    } else if options.get_flag(options::time::ACCESS) {
+        Time::Access
+    } else if options.get_flag(options::time::CHANGE) {
+        Time::Change
+    } else {
+        Time::Modification
+    }
+}
+
+/// Extracts the color option to use based on the options provided.
+///
+/// # Returns
+///
+/// A boolean representing whether or not to use color.
+fn extract_color(options: &clap::ArgMatches) -> bool {
+    match options.get_one::<String>(options::COLOR) {
+        None => options.contains_id(options::COLOR),
+        Some(val) => match val.as_str() {
+            "" | "always" | "yes" | "force" => true,
+            "auto" | "tty" | "if-tty" => std::io::stdout().is_terminal(),
+            /* "never" | "no" | "none" | */ _ => false,
+        },
+    }
+}
+
+/// Extracts the quoting style to use based on the options provided.
+///
+/// # Arguments
+///
+/// * `options` - A reference to a clap::ArgMatches object containing command line arguments.
+/// * `show_control` - A boolean value representing whether or not to show control characters.
+///
+/// # Returns
+///
+/// A QuotingStyle variant representing the quoting style to use.
+fn extract_quoting_style(options: &clap::ArgMatches, show_control: bool) -> QuotingStyle {
+    let opt_quoting_style = options
+        .get_one::<String>(options::QUOTING_STYLE)
+        .map(|cmd_line_qs| cmd_line_qs.to_owned());
+
+    if let Some(style) = opt_quoting_style {
+        match style.as_str() {
+            "literal" => QuotingStyle::Literal { show_control },
+            "shell" => QuotingStyle::Shell {
+                escape: false,
+                always_quote: false,
+                show_control,
+            },
+            "shell-always" => QuotingStyle::Shell {
+                escape: false,
+                always_quote: true,
+                show_control,
+            },
+            "shell-escape" => QuotingStyle::Shell {
+                escape: true,
+                always_quote: false,
+                show_control,
+            },
+            "shell-escape-always" => QuotingStyle::Shell {
+                escape: true,
+                always_quote: true,
+                show_control,
+            },
+            "c" => QuotingStyle::C {
+                quotes: quoting_style::Quotes::Double,
+            },
+            "escape" => QuotingStyle::C {
+                quotes: quoting_style::Quotes::None,
+            },
+            _ => unreachable!("Should have been caught by Clap"),
+        }
+    } else if options.get_flag(options::quoting::LITERAL) {
+        QuotingStyle::Literal { show_control }
+    } else if options.get_flag(options::quoting::ESCAPE) {
+        QuotingStyle::C {
+            quotes: quoting_style::Quotes::None,
+        }
+    } else if options.get_flag(options::quoting::C) {
+        QuotingStyle::C {
+            quotes: quoting_style::Quotes::Double,
+        }
+    } else if options.get_flag(options::DIRED) {
+        QuotingStyle::Literal { show_control }
+    } else {
+        // TODO: use environment variable if available
+        QuotingStyle::Shell {
+            escape: true,
+            always_quote: false,
+            show_control,
+        }
+    }
+}
+
+/// Extracts the indicator style to use based on the options provided.
+///
+/// # Returns
+///
+/// An IndicatorStyle variant representing the indicator style to use.
+fn extract_indicator_style(options: &clap::ArgMatches) -> IndicatorStyle {
+    if let Some(field) = options.get_one::<String>(options::INDICATOR_STYLE) {
+        match field.as_str() {
+            "none" => IndicatorStyle::None,
+            "file-type" => IndicatorStyle::FileType,
+            "classify" => IndicatorStyle::Classify,
+            "slash" => IndicatorStyle::Slash,
+            &_ => IndicatorStyle::None,
+        }
+    } else if let Some(field) = options.get_one::<String>(options::indicator_style::CLASSIFY) {
+        match field.as_str() {
+            "never" | "no" | "none" => IndicatorStyle::None,
+            "always" | "yes" | "force" => IndicatorStyle::Classify,
+            "auto" | "tty" | "if-tty" => {
+                if std::io::stdout().is_terminal() {
+                    IndicatorStyle::Classify
+                } else {
+                    IndicatorStyle::None
+                }
+            }
+            &_ => IndicatorStyle::None,
+        }
+    } else if options.get_flag(options::indicator_style::SLASH) {
+        IndicatorStyle::Slash
+    } else if options.get_flag(options::indicator_style::FILE_TYPE) {
+        IndicatorStyle::FileType
+    } else {
+        IndicatorStyle::None
+    }
+}
+
+fn parse_width(s: &str) -> Result<u16, LsError> {
+    let radix = match s.starts_with('0') && s.len() > 1 {
+        true => 8,
+        false => 10,
+    };
+    match u16::from_str_radix(s, radix) {
+        Ok(x) => Ok(x),
+        Err(e) => match e.kind() {
+            IntErrorKind::PosOverflow => Ok(u16::MAX),
+            _ => Err(LsError::InvalidLineWidth(s.into())),
+        },
+    }
+}
 impl Config {
     #[allow(clippy::cognitive_complexity)]
     pub fn from(options: &clap::ArgMatches) -> UResult<Self> {
         let context = options.get_flag(options::CONTEXT);
-        let (mut format, opt) = if let Some(format_) = options.get_one::<String>(options::FORMAT) {
-            (
-                match format_.as_str() {
-                    "long" | "verbose" => Format::Long,
-                    "single-column" => Format::OneLine,
-                    "columns" | "vertical" => Format::Columns,
-                    "across" | "horizontal" => Format::Across,
-                    "commas" => Format::Commas,
-                    // below should never happen as clap already restricts the values.
-                    _ => unreachable!("Invalid field for --format"),
-                },
-                Some(options::FORMAT),
-            )
-        } else if options.get_flag(options::format::LONG) {
-            (Format::Long, Some(options::format::LONG))
-        } else if options.get_flag(options::format::ACROSS) {
-            (Format::Across, Some(options::format::ACROSS))
-        } else if options.get_flag(options::format::COMMAS) {
-            (Format::Commas, Some(options::format::COMMAS))
-        } else if options.get_flag(options::format::COLUMNS) {
-            (Format::Columns, Some(options::format::COLUMNS))
-        } else if atty::is(atty::Stream::Stdout) {
-            (Format::Columns, None)
-        } else {
-            (Format::OneLine, None)
-        };
+        let (mut format, opt) = extract_format(options);
+        let files = extract_files(options);
 
         // The -o, -n and -g options are tricky. They cannot override with each
         // other because it's possible to combine them. For example, the option
@@ -504,63 +733,11 @@ impl Config {
             }
         }
 
-        let files = if options.get_flag(options::files::ALL) {
-            Files::All
-        } else if options.get_flag(options::files::ALMOST_ALL) {
-            Files::AlmostAll
-        } else {
-            Files::Normal
-        };
+        let sort = extract_sort(options);
 
-        let sort = if let Some(field) = options.get_one::<String>(options::SORT) {
-            match field.as_str() {
-                "none" => Sort::None,
-                "name" => Sort::Name,
-                "time" => Sort::Time,
-                "size" => Sort::Size,
-                "version" => Sort::Version,
-                "extension" => Sort::Extension,
-                // below should never happen as clap already restricts the values.
-                _ => unreachable!("Invalid field for --sort"),
-            }
-        } else if options.get_flag(options::sort::TIME) {
-            Sort::Time
-        } else if options.get_flag(options::sort::SIZE) {
-            Sort::Size
-        } else if options.get_flag(options::sort::NONE) {
-            Sort::None
-        } else if options.get_flag(options::sort::VERSION) {
-            Sort::Version
-        } else if options.get_flag(options::sort::EXTENSION) {
-            Sort::Extension
-        } else {
-            Sort::Name
-        };
+        let time = extract_time(options);
 
-        let time = if let Some(field) = options.get_one::<String>(options::TIME) {
-            match field.as_str() {
-                "ctime" | "status" => Time::Change,
-                "access" | "atime" | "use" => Time::Access,
-                "birth" | "creation" => Time::Birth,
-                // below should never happen as clap already restricts the values.
-                _ => unreachable!("Invalid field for --time"),
-            }
-        } else if options.get_flag(options::time::ACCESS) {
-            Time::Access
-        } else if options.get_flag(options::time::CHANGE) {
-            Time::Change
-        } else {
-            Time::Modification
-        };
-
-        let mut needs_color = match options.get_one::<String>(options::COLOR) {
-            None => options.contains_id(options::COLOR),
-            Some(val) => match val.as_str() {
-                "" | "always" | "yes" | "force" => true,
-                "auto" | "tty" | "if-tty" => atty::is(atty::Stream::Stdout),
-                /* "never" | "no" | "none" | */ _ => false,
-            },
-        };
+        let mut needs_color = extract_color(options);
 
         let cmd_line_bs = options.get_one::<String>(options::size::BLOCK_SIZE);
         let opt_si = cmd_line_bs.is_some()
@@ -640,20 +817,7 @@ impl Config {
         };
 
         let width = match options.get_one::<String>(options::WIDTH) {
-            Some(x) => {
-                if x.starts_with('0') && x.len() > 1 {
-                    // Read number as octal
-                    match u16::from_str_radix(x, 8) {
-                        Ok(v) => v,
-                        Err(_) => return Err(LsError::InvalidLineWidth(x.into()).into()),
-                    }
-                } else {
-                    match x.parse::<u16>() {
-                        Ok(u) => u,
-                        Err(_) => return Err(LsError::InvalidLineWidth(x.into()).into()),
-                    }
-                }
-            }
+            Some(x) => parse_width(x)?,
             None => match terminal_size::terminal_size() {
                 Some((width, _)) => width.0,
                 None => match std::env::var_os("COLUMNS") {
@@ -678,93 +842,11 @@ impl Config {
         } else if options.get_flag(options::SHOW_CONTROL_CHARS) {
             true
         } else {
-            !atty::is(atty::Stream::Stdout)
+            !std::io::stdout().is_terminal()
         };
 
-        let opt_quoting_style = options
-            .get_one::<String>(options::QUOTING_STYLE)
-            .map(|cmd_line_qs| cmd_line_qs.to_owned());
-
-        let mut quoting_style = if let Some(style) = opt_quoting_style {
-            match style.as_str() {
-                "literal" => QuotingStyle::Literal { show_control },
-                "shell" => QuotingStyle::Shell {
-                    escape: false,
-                    always_quote: false,
-                    show_control,
-                },
-                "shell-always" => QuotingStyle::Shell {
-                    escape: false,
-                    always_quote: true,
-                    show_control,
-                },
-                "shell-escape" => QuotingStyle::Shell {
-                    escape: true,
-                    always_quote: false,
-                    show_control,
-                },
-                "shell-escape-always" => QuotingStyle::Shell {
-                    escape: true,
-                    always_quote: true,
-                    show_control,
-                },
-                "c" => QuotingStyle::C {
-                    quotes: quoting_style::Quotes::Double,
-                },
-                "escape" => QuotingStyle::C {
-                    quotes: quoting_style::Quotes::None,
-                },
-                _ => unreachable!("Should have been caught by Clap"),
-            }
-        } else if options.get_flag(options::quoting::LITERAL) {
-            QuotingStyle::Literal { show_control }
-        } else if options.get_flag(options::quoting::ESCAPE) {
-            QuotingStyle::C {
-                quotes: quoting_style::Quotes::None,
-            }
-        } else if options.get_flag(options::quoting::C) {
-            QuotingStyle::C {
-                quotes: quoting_style::Quotes::Double,
-            }
-        } else {
-            // TODO: use environment variable if available
-            QuotingStyle::Shell {
-                escape: true,
-                always_quote: false,
-                show_control,
-            }
-        };
-
-        let indicator_style = if let Some(field) =
-            options.get_one::<String>(options::INDICATOR_STYLE)
-        {
-            match field.as_str() {
-                "none" => IndicatorStyle::None,
-                "file-type" => IndicatorStyle::FileType,
-                "classify" => IndicatorStyle::Classify,
-                "slash" => IndicatorStyle::Slash,
-                &_ => IndicatorStyle::None,
-            }
-        } else if let Some(field) = options.get_one::<String>(options::indicator_style::CLASSIFY) {
-            match field.as_str() {
-                "never" | "no" | "none" => IndicatorStyle::None,
-                "always" | "yes" | "force" => IndicatorStyle::Classify,
-                "auto" | "tty" | "if-tty" => {
-                    if atty::is(atty::Stream::Stdout) {
-                        IndicatorStyle::Classify
-                    } else {
-                        IndicatorStyle::None
-                    }
-                }
-                &_ => IndicatorStyle::None,
-            }
-        } else if options.get_flag(options::indicator_style::SLASH) {
-            IndicatorStyle::Slash
-        } else if options.get_flag(options::indicator_style::FILE_TYPE) {
-            IndicatorStyle::FileType
-        } else {
-            IndicatorStyle::None
-        };
+        let mut quoting_style = extract_quoting_style(options, show_control);
+        let indicator_style = extract_indicator_style(options);
         let time_style = parse_time_style(options)?;
 
         let mut ignore_patterns: Vec<Pattern> = Vec::new();
@@ -882,6 +964,11 @@ impl Config {
             None
         };
 
+        let dired = options.get_flag(options::DIRED);
+        if dired && format != Format::Long {
+            return Err(Box::new(LsError::ConflictingArgumentDired()));
+        }
+
         let dereference = if options.get_flag(options::dereference::ALL) {
             Dereference::All
         } else if options.get_flag(options::dereference::ARGS) {
@@ -930,11 +1017,8 @@ impl Config {
                 }
             },
             group_directories_first: options.get_flag(options::GROUP_DIRECTORIES_FIRST),
-            eol: if options.get_flag(options::ZERO) {
-                '\0'
-            } else {
-                '\n'
-            },
+            line_ending: LineEnding::from_zero_flag(options.get_flag(options::ZERO)),
+            dired,
         })
     }
 }
@@ -1067,7 +1151,7 @@ pub fn uu_app() -> Command {
             Arg::new(options::DIRED)
                 .long(options::DIRED)
                 .short('D')
-                .hide(true)
+                .help("generate output designed for Emacs' dired (Directory Editor) mode")
                 .action(ArgAction::SetTrue),
         )
         // The next four arguments do not override with the other format
@@ -1129,6 +1213,7 @@ pub fn uu_app() -> Command {
             Arg::new(options::quoting::LITERAL)
                 .short('N')
                 .long(options::quoting::LITERAL)
+                .alias("l")
                 .help("Use literal quoting style. Equivalent to `--quoting-style=literal`")
                 .overrides_with_all([
                     options::QUOTING_STYLE,
@@ -1251,9 +1336,9 @@ pub fn uu_app() -> Command {
         .arg(
             Arg::new(options::SORT)
                 .long(options::SORT)
-                .help("Sort by <field>: name, none (-U), time (-t), size (-S) or extension (-X)")
+                .help("Sort by <field>: name, none (-U), time (-t), size (-S), extension (-X) or width")
                 .value_name("field")
-                .value_parser(["name", "none", "time", "size", "version", "extension"])
+                .value_parser(["name", "none", "time", "size", "version", "extension", "width"])
                 .require_equals(true)
                 .overrides_with_all([
                     options::SORT,
@@ -1358,7 +1443,7 @@ pub fn uu_app() -> Command {
             Arg::new(options::dereference::DIR_ARGS)
                 .long(options::dereference::DIR_ARGS)
                 .help(
-                    "Do not dereference symlinks except when they link to directories and are \
+                    "Do not follow symlinks except when they link to directories and are \
                     given as command line arguments.",
                 )
                 .overrides_with_all([
@@ -1372,7 +1457,7 @@ pub fn uu_app() -> Command {
             Arg::new(options::dereference::ARGS)
                 .short('H')
                 .long(options::dereference::ARGS)
-                .help("Do not dereference symlinks except when given as command line arguments.")
+                .help("Do not follow symlinks except when given as command line arguments.")
                 .overrides_with_all([
                     options::dereference::ALL,
                     options::dereference::DIR_ARGS,
@@ -1620,10 +1705,7 @@ pub fn uu_app() -> Command {
                 .value_hint(clap::ValueHint::AnyPath)
                 .value_parser(ValueParser::os_string()),
         )
-        .after_help(
-            "The TIME_STYLE argument can be full-iso, long-iso, iso, locale or +FORMAT. FORMAT is interpreted like in date. \
-            Also the TIME_STYLE environment variable sets the default style to use.",
-        )
+        .after_help(AFTER_HELP)
 }
 
 /// Represents a Path along with it's associated data.
@@ -1778,6 +1860,7 @@ pub fn list(locs: Vec<&Path>, config: &Config) -> UResult<()> {
     let mut files = Vec::<PathData>::new();
     let mut dirs = Vec::<PathData>::new();
     let mut out = BufWriter::new(stdout());
+    let mut dired = DiredOutput::default();
     let initial_locs_len = locs.len();
 
     for loc in locs {
@@ -1811,7 +1894,7 @@ pub fn list(locs: Vec<&Path>, config: &Config) -> UResult<()> {
     sort_entries(&mut files, config, &mut out);
     sort_entries(&mut dirs, config, &mut out);
 
-    display_items(&files, config, &mut out)?;
+    display_items(&files, config, &mut out, &mut dired)?;
 
     for (pos, path_data) in dirs.iter().enumerate() {
         // Do read_dir call here to match GNU semantics by printing
@@ -1833,7 +1916,13 @@ pub fn list(locs: Vec<&Path>, config: &Config) -> UResult<()> {
         // Print dir heading - name... 'total' comes after error display
         if initial_locs_len > 1 || config.recursive {
             if pos.eq(&0usize) && files.is_empty() {
+                if config.dired {
+                    dired::indent(&mut out)?;
+                }
                 writeln!(out, "{}:", path_data.p_buf.display())?;
+                if config.dired {
+                    dired::calculate_subdired(&mut dired, path_data.display_name.len());
+                }
             } else {
                 writeln!(out, "\n{}:", path_data.p_buf.display())?;
             }
@@ -1843,9 +1932,18 @@ pub fn list(locs: Vec<&Path>, config: &Config) -> UResult<()> {
             &path_data.p_buf,
             path_data.must_dereference,
         )?);
-        enter_directory(path_data, read_dir, config, &mut out, &mut listed_ancestors)?;
+        enter_directory(
+            path_data,
+            read_dir,
+            config,
+            &mut out,
+            &mut listed_ancestors,
+            &mut dired,
+        )?;
     }
-
+    if config.dired {
+        dired::print_dired_output(config, &dired, &mut out)?;
+    }
     Ok(())
 }
 
@@ -1861,13 +1959,21 @@ fn sort_entries(entries: &mut [PathData], config: &Config, out: &mut BufWriter<S
         Sort::Size => entries.sort_by_key(|k| Reverse(k.md(out).map(|md| md.len()).unwrap_or(0))),
         // The default sort in GNU ls is case insensitive
         Sort::Name => entries.sort_by(|a, b| a.display_name.cmp(&b.display_name)),
-        Sort::Version => entries
-            .sort_by(|a, b| version_cmp(&a.p_buf.to_string_lossy(), &b.p_buf.to_string_lossy())),
+        Sort::Version => entries.sort_by(|a, b| {
+            version_cmp(&a.p_buf.to_string_lossy(), &b.p_buf.to_string_lossy())
+                .then(a.p_buf.to_string_lossy().cmp(&b.p_buf.to_string_lossy()))
+        }),
         Sort::Extension => entries.sort_by(|a, b| {
             a.p_buf
                 .extension()
                 .cmp(&b.p_buf.extension())
                 .then(a.p_buf.file_stem().cmp(&b.p_buf.file_stem()))
+        }),
+        Sort::Width => entries.sort_by(|a, b| {
+            a.display_name
+                .len()
+                .cmp(&b.display_name.len())
+                .then(a.display_name.cmp(&b.display_name))
         }),
         Sort::None => {}
     }
@@ -1929,19 +2035,26 @@ fn should_display(entry: &DirEntry, config: &Config) -> bool {
         require_literal_separator: false,
         case_sensitive: true,
     };
-    let file_name = entry.file_name().into_string().unwrap();
+    let file_name = entry.file_name();
+    // If the decoding fails, still show an incorrect rendering
+    let file_name = match file_name.to_str() {
+        Some(s) => s.to_string(),
+        None => file_name.to_string_lossy().into_owned(),
+    };
     !config
         .ignore_patterns
         .iter()
         .any(|p| p.matches_with(&file_name, options))
 }
 
+#[allow(clippy::cognitive_complexity)]
 fn enter_directory(
     path_data: &PathData,
     read_dir: ReadDir,
     config: &Config,
     out: &mut BufWriter<Stdout>,
     listed_ancestors: &mut HashSet<FileInformation>,
+    dired: &mut DiredOutput,
 ) -> UResult<()> {
     // Create vec of entries with initial dot files
     let mut entries: Vec<PathData> = if config.files == Files::All {
@@ -1987,10 +2100,14 @@ fn enter_directory(
 
     // Print total after any error display
     if config.format == Format::Long || config.alloc_size {
-        display_total(&entries, config, out)?;
+        let total = return_total(&entries, config, out)?;
+        write!(out, "{}", total.as_str())?;
+        if config.dired {
+            dired::add_total(total.len(), dired);
+        }
     }
 
-    display_items(&entries, config, out)?;
+    display_items(&entries, config, out, dired)?;
 
     if config.recursive {
         for e in entries
@@ -2011,16 +2128,16 @@ fn enter_directory(
                     continue;
                 }
                 Ok(rd) => {
-                    if !listed_ancestors
+                    if listed_ancestors
                         .insert(FileInformation::from_path(&e.p_buf, e.must_dereference)?)
                     {
-                        out.flush()?;
-                        show!(LsError::AlreadyListedError(e.p_buf.clone()));
-                    } else {
                         writeln!(out, "\n{}:", e.p_buf.display())?;
-                        enter_directory(e, rd, config, out, listed_ancestors)?;
+                        enter_directory(e, rd, config, out, listed_ancestors, dired)?;
                         listed_ancestors
                             .remove(&FileInformation::from_path(&e.p_buf, e.must_dereference)?);
+                    } else {
+                        out.flush()?;
+                        show!(LsError::AlreadyListedError(e.p_buf.clone()));
                     }
                 }
             }
@@ -2067,14 +2184,18 @@ fn display_dir_entry_size(
 }
 
 fn pad_left(string: &str, count: usize) -> String {
-    format!("{:>width$}", string, width = count)
+    format!("{string:>count$}")
 }
 
 fn pad_right(string: &str, count: usize) -> String {
-    format!("{:<width$}", string, width = count)
+    format!("{string:<count$}")
 }
 
-fn display_total(items: &[PathData], config: &Config, out: &mut BufWriter<Stdout>) -> UResult<()> {
+fn return_total(
+    items: &[PathData],
+    config: &Config,
+    out: &mut BufWriter<Stdout>,
+) -> UResult<String> {
     let mut total_size = 0;
     for item in items {
         total_size += item
@@ -2082,13 +2203,14 @@ fn display_total(items: &[PathData], config: &Config, out: &mut BufWriter<Stdout
             .as_ref()
             .map_or(0, |md| get_block_size(md, config));
     }
-    write!(
-        out,
+    if config.dired {
+        dired::indent(out)?;
+    }
+    Ok(format!(
         "total {}{}",
         display_size(total_size, config),
-        config.eol
-    )?;
-    Ok(())
+        config.line_ending
+    ))
 }
 
 fn display_additional_leading_info(
@@ -2118,7 +2240,7 @@ fn display_additional_leading_info(
         };
         // extra space is insert to align the sizes, as needed for all formats, except for the comma format.
         if config.format == Format::Commas {
-            write!(result, "{} ", s).unwrap();
+            write!(result, "{s} ").unwrap();
         } else {
             write!(result, "{} ", pad_left(&s, padding.block_size)).unwrap();
         };
@@ -2126,7 +2248,13 @@ fn display_additional_leading_info(
     Ok(result)
 }
 
-fn display_items(items: &[PathData], config: &Config, out: &mut BufWriter<Stdout>) -> UResult<()> {
+#[allow(clippy::cognitive_complexity)]
+fn display_items(
+    items: &[PathData],
+    config: &Config,
+    out: &mut BufWriter<Stdout>,
+    dired: &mut DiredOutput,
+) -> UResult<()> {
     // `-Z`, `--context`:
     // Display the SELinux security context or '?' if none is found. When used with the `-l`
     // option, print the security context to the left of the size column.
@@ -2139,15 +2267,16 @@ fn display_items(items: &[PathData], config: &Config, out: &mut BufWriter<Stdout
             if config.inode || config.alloc_size {
                 let more_info =
                     display_additional_leading_info(item, &padding_collection, config, out)?;
-                write!(out, "{}", more_info)?;
+
+                write!(out, "{more_info}")?;
             }
             #[cfg(not(unix))]
             if config.alloc_size {
                 let more_info =
                     display_additional_leading_info(item, &padding_collection, config, out)?;
-                write!(out, "{}", more_info)?;
+                write!(out, "{more_info}")?;
             }
-            display_item_long(item, &padding_collection, config, out)?;
+            display_item_long(item, &padding_collection, config, out, dired)?;
         }
     } else {
         let mut longest_context_len = 1;
@@ -2197,12 +2326,12 @@ fn display_items(items: &[PathData], config: &Config, out: &mut BufWriter<Stdout
                 // Current col is never zero again if names have been printed.
                 // So we print a newline.
                 if current_col > 0 {
-                    write!(out, "{}", config.eol)?;
+                    write!(out, "{}", config.line_ending)?;
                 }
             }
             _ => {
                 for name in names {
-                    write!(out, "{}{}", name.contents, config.eol)?;
+                    write!(out, "{}{}", name.contents, config.line_ending)?;
                 }
             }
         };
@@ -2276,7 +2405,7 @@ fn display_grid(
 
         match grid.fit_into_width(width as usize) {
             Some(output) => {
-                write!(out, "{}", output)?;
+                write!(out, "{output}")?;
             }
             // Width is too small for the grid, so we fit it in one column
             None => {
@@ -2315,15 +2444,21 @@ fn display_grid(
 /// ```
 /// that decide the maximum possible character count of each field.
 #[allow(clippy::write_literal)]
+#[allow(clippy::cognitive_complexity)]
 fn display_item_long(
     item: &PathData,
     padding: &PaddingCollection,
     config: &Config,
     out: &mut BufWriter<Stdout>,
+    dired: &mut DiredOutput,
 ) -> UResult<()> {
+    let mut output_display: String = String::new();
+    if config.dired {
+        output_display += "  ";
+    }
     if let Some(md) = item.md(out) {
         write!(
-            out,
+            output_display,
             "{}{} {}",
             display_permissions(md, true),
             if item.security_context.len() > 1 {
@@ -2334,49 +2469,54 @@ fn display_item_long(
                 ""
             },
             pad_left(&display_symlink_count(md), padding.link_count)
-        )?;
+        )
+        .unwrap();
 
         if config.long.owner {
             write!(
-                out,
+                output_display,
                 " {}",
                 pad_right(&display_uname(md, config), padding.uname)
-            )?;
+            )
+            .unwrap();
         }
 
         if config.long.group {
             write!(
-                out,
+                output_display,
                 " {}",
                 pad_right(&display_group(md, config), padding.group)
-            )?;
+            )
+            .unwrap();
         }
 
         if config.context {
             write!(
-                out,
+                output_display,
                 " {}",
                 pad_right(&item.security_context, padding.context)
-            )?;
+            )
+            .unwrap();
         }
 
         // Author is only different from owner on GNU/Hurd, so we reuse
         // the owner, since GNU/Hurd is not currently supported by Rust.
         if config.long.author {
             write!(
-                out,
+                output_display,
                 " {}",
                 pad_right(&display_uname(md, config), padding.uname)
-            )?;
+            )
+            .unwrap();
         }
 
         match display_len_or_rdev(md, config) {
             SizeOrDeviceId::Size(size) => {
-                write!(out, " {}", pad_left(&size, padding.size))?;
+                write!(output_display, " {}", pad_left(&size, padding.size)).unwrap();
             }
             SizeOrDeviceId::Device(major, minor) => {
                 write!(
-                    out,
+                    output_display,
                     " {}, {}",
                     pad_left(
                         &major,
@@ -2396,13 +2536,23 @@ fn display_item_long(
                         #[cfg(unix)]
                         padding.minor,
                     ),
-                )?;
+                )
+                .unwrap();
             }
         };
 
-        let dfn = display_file_name(item, config, None, String::new(), out).contents;
+        write!(output_display, " {} ", display_date(md, config)).unwrap();
 
-        write!(out, " {} {}{}", display_date(md, config), dfn, config.eol)?;
+        let displayed_file = display_file_name(item, config, None, String::new(), out).contents;
+        if config.dired {
+            let (start, end) = dired::calculate_dired(
+                output_display.len(),
+                displayed_file.len(),
+                &dired.dired_positions,
+            );
+            dired::update_positions(start, end, dired, false);
+        }
+        write!(output_display, "{}{}", displayed_file, config.line_ending).unwrap();
     } else {
         #[cfg(unix)]
         let leading_char = {
@@ -2438,9 +2588,9 @@ fn display_item_long(
         };
 
         write!(
-            out,
+            output_display,
             "{}{} {}",
-            format_args!("{}?????????", leading_char),
+            format_args!("{leading_char}?????????"),
             if item.security_context.len() > 1 {
                 // GNU `ls` uses a "." character to indicate a file with a security context,
                 // but not other alternate access method.
@@ -2449,41 +2599,53 @@ fn display_item_long(
                 ""
             },
             pad_left("?", padding.link_count)
-        )?;
+        )
+        .unwrap();
 
         if config.long.owner {
-            write!(out, " {}", pad_right("?", padding.uname))?;
+            write!(output_display, " {}", pad_right("?", padding.uname)).unwrap();
         }
 
         if config.long.group {
-            write!(out, " {}", pad_right("?", padding.group))?;
+            write!(output_display, " {}", pad_right("?", padding.group)).unwrap();
         }
 
         if config.context {
             write!(
-                out,
+                output_display,
                 " {}",
                 pad_right(&item.security_context, padding.context)
-            )?;
+            )
+            .unwrap();
         }
 
         // Author is only different from owner on GNU/Hurd, so we reuse
         // the owner, since GNU/Hurd is not currently supported by Rust.
         if config.long.author {
-            write!(out, " {}", pad_right("?", padding.uname))?;
+            write!(output_display, " {}", pad_right("?", padding.uname)).unwrap();
         }
 
-        let dfn = display_file_name(item, config, None, String::new(), out).contents;
+        let displayed_file = display_file_name(item, config, None, String::new(), out).contents;
         let date_len = 12;
 
-        writeln!(
-            out,
-            " {} {} {}",
+        write!(
+            output_display,
+            " {} {} ",
             pad_left("?", padding.size),
             pad_left("?", date_len),
-            dfn,
-        )?;
+        )
+        .unwrap();
+
+        if config.dired {
+            dired::calculate_and_update_positions(
+                output_display.len(),
+                displayed_file.trim().len(),
+                dired,
+            );
+        }
+        write!(output_display, "{}{}", displayed_file, config.line_ending).unwrap();
     }
+    write!(out, "{}", output_display)?;
 
     Ok(())
 }
@@ -2651,7 +2813,13 @@ fn display_len_or_rdev(metadata: &Metadata, config: &Config) -> SizeOrDeviceId {
         target_os = "linux",
         target_os = "macos",
         target_os = "android",
-        target_os = "ios"
+        target_os = "ios",
+        target_os = "freebsd",
+        target_os = "dragonfly",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "illumos",
+        target_os = "solaris"
     ))]
     {
         let ft = metadata.file_type();
@@ -2745,6 +2913,7 @@ fn classify_file(path: &PathData, out: &mut BufWriter<Stdout>) -> Option<char> {
 /// Note that non-unicode sequences in symlink targets are dealt with using
 /// [`std::path::Path::to_string_lossy`].
 #[allow(unused_variables)]
+#[allow(clippy::cognitive_complexity)]
 fn display_file_name(
     path: &PathData,
     config: &Config,
@@ -2813,55 +2982,64 @@ fn display_file_name(
         && path.file_type(out).unwrap().is_symlink()
         && !path.must_dereference
     {
-        if let Ok(target) = path.p_buf.read_link() {
-            name.push_str(" -> ");
+        match path.p_buf.read_link() {
+            Ok(target) => {
+                name.push_str(" -> ");
 
-            // We might as well color the symlink output after the arrow.
-            // This makes extra system calls, but provides important information that
-            // people run `ls -l --color` are very interested in.
-            if let Some(ls_colors) = &config.color {
-                // We get the absolute path to be able to construct PathData with valid Metadata.
-                // This is because relative symlinks will fail to get_metadata.
-                let mut absolute_target = target.clone();
-                if target.is_relative() {
-                    if let Some(parent) = path.p_buf.parent() {
-                        absolute_target = parent.join(absolute_target);
+                // We might as well color the symlink output after the arrow.
+                // This makes extra system calls, but provides important information that
+                // people run `ls -l --color` are very interested in.
+                if let Some(ls_colors) = &config.color {
+                    // We get the absolute path to be able to construct PathData with valid Metadata.
+                    // This is because relative symlinks will fail to get_metadata.
+                    let mut absolute_target = target.clone();
+                    if target.is_relative() {
+                        if let Some(parent) = path.p_buf.parent() {
+                            absolute_target = parent.join(absolute_target);
+                        }
                     }
-                }
 
-                let target_data = PathData::new(absolute_target, None, None, config, false);
+                    let target_data = PathData::new(absolute_target, None, None, config, false);
 
-                // If we have a symlink to a valid file, we use the metadata of said file.
-                // Because we use an absolute path, we can assume this is guaranteed to exist.
-                // Otherwise, we use path.md(), which will guarantee we color to the same
-                // color of non-existent symlinks according to style_for_path_with_metadata.
-                if path.md(out).is_none()
-                    && get_metadata(target_data.p_buf.as_path(), target_data.must_dereference)
-                        .is_err()
-                {
-                    name.push_str(&path.p_buf.read_link().unwrap().to_string_lossy());
+                    // If we have a symlink to a valid file, we use the metadata of said file.
+                    // Because we use an absolute path, we can assume this is guaranteed to exist.
+                    // Otherwise, we use path.md(), which will guarantee we color to the same
+                    // color of non-existent symlinks according to style_for_path_with_metadata.
+                    if path.md(out).is_none()
+                        && get_metadata(target_data.p_buf.as_path(), target_data.must_dereference)
+                            .is_err()
+                    {
+                        name.push_str(&path.p_buf.read_link().unwrap().to_string_lossy());
+                    } else {
+                        // Use fn get_metadata instead of md() here and above because ls
+                        // should not exit with an err, if we are unable to obtain the target_metadata
+                        let target_metadata = match get_metadata(
+                            target_data.p_buf.as_path(),
+                            target_data.must_dereference,
+                        ) {
+                            Ok(md) => md,
+                            Err(_) => path.md(out).unwrap().to_owned(),
+                        };
+
+                        name.push_str(&color_name(
+                            escape_name(target.as_os_str(), &config.quoting_style),
+                            &target_data.p_buf,
+                            Some(&target_metadata),
+                            ls_colors,
+                        ));
+                    }
                 } else {
-                    // Use fn get_metadata instead of md() here and above because ls
-                    // should not exit with an err, if we are unable to obtain the target_metadata
-                    let target_metadata = match get_metadata(
-                        target_data.p_buf.as_path(),
-                        target_data.must_dereference,
-                    ) {
-                        Ok(md) => md,
-                        Err(_) => path.md(out).unwrap().to_owned(),
-                    };
-
-                    name.push_str(&color_name(
-                        escape_name(target.as_os_str(), &config.quoting_style),
-                        &target_data.p_buf,
-                        Some(&target_metadata),
-                        ls_colors,
-                    ));
+                    // If no coloring is required, we just use target as is.
+                    // Apply the right quoting
+                    name.push_str(&escape_name(target.as_os_str(), &config.quoting_style));
                 }
-            } else {
-                // If no coloring is required, we just use target as is.
-                // Apply the right quoting
-                name.push_str(&escape_name(target.as_os_str(), &config.quoting_style));
+            }
+            Err(err) => {
+                show!(LsError::IOErrorContext(
+                    err,
+                    path.p_buf.to_path_buf(),
+                    false
+                ));
             }
         }
     }
@@ -2870,12 +3048,12 @@ fn display_file_name(
     // to get correct alignment from later calls to`display_grid()`.
     if config.context {
         if let Some(pad_count) = prefix_context {
-            let security_context = if !matches!(config.format, Format::Commas) {
-                pad_left(&path.security_context, pad_count)
-            } else {
+            let security_context = if matches!(config.format, Format::Commas) {
                 path.security_context.to_owned()
+            } else {
+                pad_left(&path.security_context, pad_count)
             };
-            name = format!("{} {}", security_context, name);
+            name = format!("{security_context} {name}");
             width += security_context.len() + 1;
         }
     }
@@ -2917,6 +3095,20 @@ fn display_inode(metadata: &Metadata) -> String {
 #[allow(unused_variables)]
 fn get_security_context(config: &Config, p_buf: &Path, must_dereference: bool) -> String {
     let substitute_string = "?".to_string();
+    // If we must dereference, ensure that the symlink is actually valid even if the system
+    // does not support SELinux.
+    // Conforms to the GNU coreutils where a dangling symlink results in exit code 1.
+    if must_dereference {
+        match get_metadata(p_buf, must_dereference) {
+            Err(err) => {
+                // The Path couldn't be dereferenced, so return early and set exit code 1
+                // to indicate a minor error
+                show!(LsError::IOErrorContext(err, p_buf.to_path_buf(), false));
+                return substitute_string;
+            }
+            Ok(md) => (),
+        }
+    }
     if config.selinux_supported {
         #[cfg(feature = "selinux")]
         {

@@ -1,8 +1,5 @@
 // This file is part of the uutils coreutils package.
 //
-// (c) Joseph Crail <jbcrail@gmail.com>
-// (c) Jian Zeng <anonymousknight96 AT gmail.com>
-//
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
@@ -31,6 +28,9 @@ use std::path::{Component, Path, PathBuf, MAIN_SEPARATOR};
 #[cfg(target_os = "windows")]
 use winapi_util::AsHandleRef;
 
+/// Used to check if the `mode` has its `perm` bit set.
+///
+/// This macro expands to `mode & perm != 0`.
 #[cfg(unix)]
 #[macro_export]
 macro_rules! has {
@@ -114,7 +114,9 @@ impl FileInformation {
             not(target_vendor = "apple"),
             not(target_os = "android"),
             not(target_os = "freebsd"),
+            not(target_os = "netbsd"),
             not(target_arch = "aarch64"),
+            not(target_arch = "riscv64"),
             target_pointer_width = "64"
         ))]
         return self.0.st_nlink;
@@ -124,7 +126,9 @@ impl FileInformation {
                 target_vendor = "apple",
                 target_os = "android",
                 target_os = "freebsd",
+                target_os = "netbsd",
                 target_arch = "aarch64",
+                target_arch = "riscv64",
                 not(target_pointer_width = "64")
             )
         ))]
@@ -135,9 +139,16 @@ impl FileInformation {
 
     #[cfg(unix)]
     pub fn inode(&self) -> u64 {
-        #[cfg(all(not(target_os = "freebsd"), target_pointer_width = "64"))]
+        #[cfg(all(
+            not(any(target_os = "freebsd", target_os = "netbsd")),
+            target_pointer_width = "64"
+        ))]
         return self.0.st_ino;
-        #[cfg(any(target_os = "freebsd", not(target_pointer_width = "64")))]
+        #[cfg(any(
+            target_os = "freebsd",
+            target_os = "netbsd",
+            not(target_pointer_width = "64")
+        ))]
         return self.0.st_ino.into();
     }
 }
@@ -324,6 +335,7 @@ impl<'a> From<Component<'a>> for OwningComponent {
 /// * [`ResolveMode::Logical`] makes this function resolve '..' components
 ///   before symlinks
 ///
+#[allow(clippy::cognitive_complexity)]
 pub fn canonicalize<P: AsRef<Path>>(
     original: P,
     miss_mode: MissingHandling,
@@ -439,9 +451,9 @@ pub fn display_permissions(metadata: &fs::Metadata, display_file_type: bool) -> 
             '-'
         };
 
-        format!("{0}r{1}xr{1}xr{1}x", file_type, write)
+        format!("{file_type}r{write}xr{write}xr{write}x")
     } else {
-        format!("r{0}xr{0}xr{0}x", write)
+        format!("r{write}xr{write}xr{write}x")
     }
 }
 
@@ -453,6 +465,9 @@ pub fn display_permissions(metadata: &fs::Metadata, display_file_type: bool) -> 
     display_permissions_unix(mode, display_file_type)
 }
 
+// The logic below is more readable written this way.
+#[allow(clippy::if_not_else)]
+#[allow(clippy::cognitive_complexity)]
 #[cfg(unix)]
 /// Display the permissions of a file on a unix like system
 pub fn display_permissions_unix(mode: mode_t, display_file_type: bool) -> String {
@@ -580,10 +595,108 @@ pub fn make_path_relative_to<P1: AsRef<Path>, P2: AsRef<Path>>(path: P1, to: P2)
     components.iter().collect()
 }
 
+/// Checks if there is a symlink loop in the given path.
+///
+/// A symlink loop is a chain of symlinks where the last symlink points back to one of the previous symlinks in the chain.
+///
+/// # Arguments
+///
+/// * `path` - A reference to a `Path` representing the starting path to check for symlink loops.
+///
+/// # Returns
+///
+/// * `bool` - Returns `true` if a symlink loop is detected, `false` otherwise.
+pub fn is_symlink_loop(path: &Path) -> bool {
+    let mut visited_symlinks = HashSet::new();
+    let mut current_path = path.to_path_buf();
+
+    while let (Ok(metadata), Ok(link)) = (
+        current_path.symlink_metadata(),
+        fs::read_link(&current_path),
+    ) {
+        if !metadata.file_type().is_symlink() {
+            return false;
+        }
+        if !visited_symlinks.insert(current_path.clone()) {
+            return true;
+        }
+        current_path = link;
+    }
+
+    false
+}
+
+#[cfg(not(unix))]
+// Hard link comparison is not supported on non-Unix platforms
+pub fn are_hardlinks_to_same_file(_source: &Path, _target: &Path) -> bool {
+    false
+}
+
+/// Checks if two paths are hard links to the same file.
+///
+/// # Arguments
+///
+/// * `source` - A reference to a `Path` representing the source path.
+/// * `target` - A reference to a `Path` representing the target path.
+///
+/// # Returns
+///
+/// * `bool` - Returns `true` if the paths are hard links to the same file, and `false` otherwise.
+#[cfg(unix)]
+pub fn are_hardlinks_to_same_file(source: &Path, target: &Path) -> bool {
+    let source_metadata = match fs::symlink_metadata(source) {
+        Ok(metadata) => metadata,
+        Err(_) => return false,
+    };
+
+    let target_metadata = match fs::symlink_metadata(target) {
+        Ok(metadata) => metadata,
+        Err(_) => return false,
+    };
+
+    source_metadata.ino() == target_metadata.ino() && source_metadata.dev() == target_metadata.dev()
+}
+
+#[cfg(not(unix))]
+pub fn are_hardlinks_or_one_way_symlink_to_same_file(_source: &Path, _target: &Path) -> bool {
+    false
+}
+
+/// Checks if either two paths are hard links to the same file or if the source path is a symbolic link which when fully resolved points to target path
+///
+/// # Arguments
+///
+/// * `source` - A reference to a `Path` representing the source path.
+/// * `target` - A reference to a `Path` representing the target path.
+///
+/// # Returns
+///
+/// * `bool` - Returns `true` if either of above conditions are true, and `false` otherwise.
+#[cfg(unix)]
+pub fn are_hardlinks_or_one_way_symlink_to_same_file(source: &Path, target: &Path) -> bool {
+    let source_metadata = match fs::metadata(source) {
+        Ok(metadata) => metadata,
+        Err(_) => return false,
+    };
+
+    let target_metadata = match fs::symlink_metadata(target) {
+        Ok(metadata) => metadata,
+        Err(_) => return false,
+    };
+
+    source_metadata.ino() == target_metadata.ino() && source_metadata.dev() == target_metadata.dev()
+}
+
 #[cfg(test)]
 mod tests {
     // Note this useful idiom: importing names from outer (for mod tests) scope.
     use super::*;
+    #[cfg(unix)]
+    use std::io::Write;
+    #[cfg(unix)]
+    use std::os::unix;
+    #[cfg(unix)]
+    use tempfile::{tempdir, NamedTempFile};
 
     struct NormalizePathTestCase<'a> {
         path: &'a str,
@@ -690,5 +803,82 @@ mod tests {
             "c---r-xr-T",
             display_permissions_unix(S_IFCHR | S_ISVTX as mode_t | 0o054, true)
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_is_symlink_loop_no_loop() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("file.txt");
+        let symlink_path = temp_dir.path().join("symlink");
+
+        fs::write(&file_path, "test content").unwrap();
+        unix::fs::symlink(&file_path, &symlink_path).unwrap();
+
+        assert!(!is_symlink_loop(&symlink_path));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_is_symlink_loop_direct_loop() {
+        let temp_dir = tempdir().unwrap();
+        let symlink_path = temp_dir.path().join("loop");
+
+        unix::fs::symlink(&symlink_path, &symlink_path).unwrap();
+
+        assert!(is_symlink_loop(&symlink_path));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_is_symlink_loop_indirect_loop() {
+        let temp_dir = tempdir().unwrap();
+        let symlink1_path = temp_dir.path().join("symlink1");
+        let symlink2_path = temp_dir.path().join("symlink2");
+
+        unix::fs::symlink(&symlink1_path, &symlink2_path).unwrap();
+        unix::fs::symlink(&symlink2_path, &symlink1_path).unwrap();
+
+        assert!(is_symlink_loop(&symlink1_path));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_are_hardlinks_to_same_file_same_file() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "Test content").unwrap();
+
+        let path1 = temp_file.path();
+        let path2 = temp_file.path();
+
+        assert!(are_hardlinks_to_same_file(&path1, &path2));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_are_hardlinks_to_same_file_different_files() {
+        let mut temp_file1 = NamedTempFile::new().unwrap();
+        writeln!(temp_file1, "Test content 1").unwrap();
+
+        let mut temp_file2 = NamedTempFile::new().unwrap();
+        writeln!(temp_file2, "Test content 2").unwrap();
+
+        let path1 = temp_file1.path();
+        let path2 = temp_file2.path();
+
+        assert!(!are_hardlinks_to_same_file(&path1, &path2));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_are_hardlinks_to_same_file_hard_link() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "Test content").unwrap();
+        let path1 = temp_file.path();
+
+        let path2 = temp_file.path().with_extension("hardlink");
+        fs::hard_link(&path1, &path2).unwrap();
+
+        assert!(are_hardlinks_to_same_file(&path1, &path2));
     }
 }

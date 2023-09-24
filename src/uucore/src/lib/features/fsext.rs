@@ -1,17 +1,12 @@
 // This file is part of the uutils coreutils package.
 //
-// (c) Jian Zeng <anonymousknight96@gmail.com>
-// (c) Fangxu Hu <framlog@gmail.com>
-// (c) Sylvestre Ledru <sylvestre@debian.org>
-//
-// For the full copyright and license information, please view the LICENSE file
-// that was distributed with this source code.
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 //! Set of functions to manage file systems
 
 // spell-checker:ignore DATETIME subsecond (arch) bitrig ; (fs) cifs smbfs
 
-extern crate time;
 use time::macros::format_description;
 use time::UtcOffset;
 
@@ -195,15 +190,10 @@ impl MountInfo {
         }
         #[cfg(unix)]
         {
-            if self.dev_name.find(':').is_some()
+            self.remote = self.dev_name.find(':').is_some()
                 || (self.dev_name.starts_with("//") && self.fs_type == "smbfs"
                     || self.fs_type == "cifs")
-                || self.dev_name == "-hosts"
-            {
-                self.remote = true;
-            } else {
-                self.remote = false;
-            }
+                || self.dev_name == "-hosts";
         }
     }
 
@@ -295,10 +285,10 @@ impl MountInfo {
                 fs_type_buf.len() as u32,
             )
         };
-        let fs_type = if 0 != success {
-            Some(LPWSTR2String(&fs_type_buf))
-        } else {
+        let fs_type = if 0 == success {
             None
+        } else {
+            Some(LPWSTR2String(&fs_type_buf))
         };
         let mut mn_info = Self {
             dev_id: volume_name,
@@ -372,9 +362,9 @@ extern "C" {
     fn get_mount_info(mount_buffer_p: *mut *mut StatFs, flags: c_int) -> c_int;
 
     #[cfg(any(
-        all(target_os = "freebsd"),
-        all(target_os = "netbsd"),
-        all(target_os = "openbsd"),
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
         all(target_vendor = "apple", target_arch = "aarch64")
     ))]
     #[link_name = "getmntinfo"] // spell-checker:disable-line
@@ -410,7 +400,7 @@ pub fn read_fs_list() -> Result<Vec<MountInfo>, std::io::Error> {
         let reader = BufReader::new(f);
         Ok(reader
             .lines()
-            .filter_map(|line| line.ok())
+            .map_while(Result::ok)
             .filter_map(|line| {
                 let raw_data = line.split_whitespace().collect::<Vec<&str>>();
                 MountInfo::new(file_name, &raw_data)
@@ -619,6 +609,7 @@ impl FsMeta for StatFs {
             not(target_vendor = "apple"),
             not(target_os = "android"),
             not(target_os = "freebsd"),
+            not(target_arch = "s390x"),
             target_pointer_width = "64"
         ))]
         return self.f_bsize;
@@ -626,6 +617,7 @@ impl FsMeta for StatFs {
             not(target_env = "musl"),
             not(target_os = "freebsd"),
             any(
+                target_arch = "s390x",
                 target_vendor = "apple",
                 target_os = "android",
                 not(target_pointer_width = "64")
@@ -681,6 +673,7 @@ impl FsMeta for StatFs {
             not(target_vendor = "apple"),
             not(target_os = "android"),
             not(target_os = "freebsd"),
+            not(target_arch = "s390x"),
             target_pointer_width = "64"
         ))]
         return self.f_type;
@@ -690,6 +683,7 @@ impl FsMeta for StatFs {
                 target_vendor = "apple",
                 target_os = "android",
                 target_os = "freebsd",
+                target_arch = "s390x",
                 not(target_pointer_width = "64")
             )
         ))]
@@ -828,7 +822,7 @@ pub fn pretty_time(sec: i64, nsec: i64) -> String {
     let tm = match time::OffsetDateTime::from_unix_timestamp_nanos(ts_nanos) {
         Ok(tm) => tm,
         Err(e) => {
-            panic!("error: {}", e);
+            panic!("error: {e}");
         }
     };
 
@@ -838,7 +832,7 @@ pub fn pretty_time(sec: i64, nsec: i64) -> String {
     let local_offset = match UtcOffset::local_offset_at(tm) {
         Ok(lo) => lo,
         Err(e) => {
-            panic!("error: {}", e);
+            panic!("error: {e}");
         }
     };
 
@@ -858,10 +852,10 @@ pub fn pretty_time(sec: i64, nsec: i64) -> String {
 pub fn pretty_filetype<'a>(mode: mode_t, size: u64) -> &'a str {
     match mode & S_IFMT {
         S_IFREG => {
-            if size != 0 {
-                "regular file"
-            } else {
+            if size == 0 {
                 "regular empty file"
+            } else {
+                "regular file"
             }
         }
         S_IFDIR => "directory",
@@ -993,7 +987,7 @@ pub fn pretty_fstype<'a>(fstype: i64) -> Cow<'a, str> {
         0x5846_5342 => "xfs".into(),
         0x012F_D16D => "xia".into(),
         0x2FC1_2FC1 => "zfs".into(),
-        other => format!("UNKNOWN ({:#x})", other).into(),
+        other => format!("UNKNOWN ({other:#x})").into(),
     }
     // spell-checker:enable
 }

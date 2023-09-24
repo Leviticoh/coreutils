@@ -1,9 +1,7 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * (c) Jordi Boggiano <j.boggiano@seld.be>
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 /* last synced with: whoami (GNU coreutils) 8.21 */
 
@@ -11,10 +9,12 @@ use clap::{crate_version, Command};
 
 use uucore::display::println_verbatim;
 use uucore::error::{FromIo, UResult};
+use uucore::{format_usage, help_about, help_usage};
 
 mod platform;
 
-static ABOUT: &str = "Print the current username.";
+const ABOUT: &str = help_about!("whoami.md");
+const USAGE: &str = help_usage!("whoami.md");
 
 #[uucore::main]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
@@ -28,5 +28,6 @@ pub fn uu_app() -> Command {
     Command::new(uucore::util_name())
         .version(crate_version!())
         .about(ABOUT)
+        .override_usage(format_usage(USAGE))
         .infer_long_args(true)
 }

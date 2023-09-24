@@ -1,7 +1,7 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 // spell-checker:ignore tmpfs Pcent Itotal Iused Iavail Ipcent
 //! The filesystem usage data table.
 //!
@@ -438,7 +438,7 @@ impl fmt::Display for Table {
                     Alignment::Left => {
                         if is_last_col {
                             // no trailing spaces in last column
-                            write!(f, "{}", elem)?;
+                            write!(f, "{elem}")?;
                         } else {
                             write!(f, "{:<width$}", elem, width = self.widths[i])?;
                         }
@@ -513,7 +513,7 @@ mod tests {
 
     #[test]
     fn test_default_header() {
-        let options = Default::default();
+        let options = Options::default();
         assert_eq!(
             Header::get_headers(&options),
             vec!(

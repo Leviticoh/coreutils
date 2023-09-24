@@ -1,10 +1,5 @@
 // This file is part of the uutils coreutils package.
 //
-// (c) Jordi Boggiano <j.boggiano@seld.be>
-// (c) Evgeniy Klyuchikov <evgeniy.klyuchikov@gmail.com>
-// (c) Joshua S. Miller <jsmiller@uchicago.edu>
-// (c) Árni Dagur <arni@dagur.eu>
-//
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
@@ -13,7 +8,7 @@
 // last synced with: cat (GNU coreutils) 8.13
 use clap::{crate_version, Arg, ArgAction, Command};
 use std::fs::{metadata, File};
-use std::io::{self, Read, Write};
+use std::io::{self, IsTerminal, Read, Write};
 use thiserror::Error;
 use uucore::display::Quotable;
 use uucore::error::UResult;
@@ -33,12 +28,10 @@ use std::net::Shutdown;
 use std::os::unix::fs::FileTypeExt;
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
-use uucore::format_usage;
+use uucore::{format_usage, help_about, help_usage};
 
-static NAME: &str = "cat";
-static USAGE: &str = "{} [OPTION]... [FILE]...";
-static ABOUT: &str = "Concatenate FILE(s), or standard input, to standard output
-With no FILE, or when FILE is -, read standard input.";
+const USAGE: &str = help_usage!("cat.md");
+const ABOUT: &str = help_about!("cat.md");
 
 #[derive(Error, Debug)]
 enum CatError {
@@ -193,7 +186,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         NumberingMode::None
     };
 
-    let show_nonprint = vec![
+    let show_nonprint = [
         options::SHOW_ALL.to_owned(),
         options::SHOW_NONPRINTING_ENDS.to_owned(),
         options::SHOW_NONPRINTING_TABS.to_owned(),
@@ -202,7 +195,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     .iter()
     .any(|v| matches.get_flag(v));
 
-    let show_ends = vec![
+    let show_ends = [
         options::SHOW_ENDS.to_owned(),
         options::SHOW_ALL.to_owned(),
         options::SHOW_NONPRINTING_ENDS.to_owned(),
@@ -210,7 +203,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     .iter()
     .any(|v| matches.get_flag(v));
 
-    let show_tabs = vec![
+    let show_tabs = [
         options::SHOW_ALL.to_owned(),
         options::SHOW_TABS.to_owned(),
         options::SHOW_NONPRINTING_TABS.to_owned(),
@@ -236,7 +229,6 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
 pub fn uu_app() -> Command {
     Command::new(uucore::util_name())
-        .name(NAME)
         .version(crate_version!())
         .override_usage(format_usage(USAGE))
         .about(ABOUT)
@@ -292,7 +284,6 @@ pub fn uu_app() -> Command {
         .arg(
             Arg::new(options::SHOW_NONPRINTING_TABS)
                 .short('t')
-                .long(options::SHOW_NONPRINTING_TABS)
                 .help("equivalent to -vT")
                 .action(ArgAction::SetTrue),
         )
@@ -335,7 +326,7 @@ fn cat_path(
             let stdin = io::stdin();
             let mut handle = InputHandle {
                 reader: stdin,
-                is_interactive: atty::is(atty::Stream::Stdin),
+                is_interactive: std::io::stdin().is_terminal(),
             };
             cat_handle(&mut handle, options, state)
         }
@@ -426,7 +417,7 @@ fn get_input_type(path: &str) -> CatResult<InputType> {
         ft if ft.is_file() => Ok(InputType::File),
         ft if ft.is_symlink() => Ok(InputType::SymLink),
         _ => Err(CatError::UnknownFiletype {
-            ft_debug: format!("{:?}", ft),
+            ft_debug: format!("{ft:?}"),
         }),
     }
 }
@@ -458,6 +449,7 @@ fn write_fast<R: FdReadable>(handle: &mut InputHandle<R>) -> CatResult<()> {
 
 /// Outputs file contents to stdout in a line-by-line fashion,
 /// propagating any errors that might occur.
+#[allow(clippy::cognitive_complexity)]
 fn write_lines<R: FdReadable>(
     handle: &mut InputHandle<R>,
     options: &OutputOptions,

@@ -1,9 +1,7 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * (c) Konstantin Pospelov <kupospelov@gmail.com>
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 // spell-checker:ignore (ToDO) autoformat FILENUM whitespaces pairable unpairable nocheck
 
@@ -22,9 +20,11 @@ use std::num::IntErrorKind;
 use std::os::unix::ffi::OsStrExt;
 use uucore::display::Quotable;
 use uucore::error::{set_exit_code, UError, UResult, USimpleError};
-use uucore::{crash, crash_if_err};
+use uucore::line_ending::LineEnding;
+use uucore::{crash, crash_if_err, format_usage, help_about, help_usage};
 
-static NAME: &str = "join";
+const ABOUT: &str = help_about!("join.md");
+const USAGE: &str = help_usage!("join.md");
 
 #[derive(Debug)]
 enum JoinError {
@@ -43,7 +43,7 @@ impl Error for JoinError {}
 impl Display for JoinError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::IOError(e) => write!(f, "io error: {}", e),
+            Self::IOError(e) => write!(f, "io error: {e}"),
             Self::UnorderedInput(e) => f.write_str(e),
         }
     }
@@ -59,13 +59,6 @@ impl From<std::io::Error> for JoinError {
 enum FileNum {
     File1,
     File2,
-}
-
-#[repr(u8)]
-#[derive(Copy, Clone)]
-enum LineEnding {
-    Nul = 0,
-    Newline = b'\n',
 }
 
 #[derive(Copy, Clone, PartialEq)]
@@ -599,6 +592,7 @@ impl<'a> State<'a> {
 }
 
 #[uucore::main]
+#[allow(clippy::cognitive_complexity)]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let matches = uu_app().try_get_matches_from(args)?;
 
@@ -606,7 +600,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let key1 = parse_field_number_option(matches.get_one::<String>("1").map(|s| s.as_str()))?;
     let key2 = parse_field_number_option(matches.get_one::<String>("2").map(|s| s.as_str()))?;
 
-    let mut settings: Settings = Default::default();
+    let mut settings = Settings::default();
 
     let v_values = matches.get_many::<String>("v");
     if v_values.is_some() {
@@ -681,9 +675,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         settings.headers = true;
     }
 
-    if matches.get_flag("z") {
-        settings.line_ending = LineEnding::Nul;
-    }
+    settings.line_ending = LineEnding::from_zero_flag(matches.get_flag("z"));
 
     let file1 = matches.get_one::<String>("file1").unwrap();
     let file2 = matches.get_one::<String>("file2").unwrap();
@@ -694,19 +686,15 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
     match exec(file1, file2, settings) {
         Ok(_) => Ok(()),
-        Err(e) => Err(USimpleError::new(1, format!("{}", e))),
+        Err(e) => Err(USimpleError::new(1, format!("{e}"))),
     }
 }
 
 pub fn uu_app() -> Command {
-    Command::new(NAME)
+    Command::new(uucore::util_name())
         .version(crate_version!())
-        .about(
-            "For each pair of input lines with identical join fields, write a line to
-standard output. The default join field is the first, delimited by blanks.
-
-When FILE1 or FILE2 (not both) is -, read standard input.",
-        )
+        .about(ABOUT)
+        .override_usage(format_usage(USAGE))
         .infer_long_args(true)
         .arg(
             Arg::new("a")

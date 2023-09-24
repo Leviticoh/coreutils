@@ -1,8 +1,11 @@
-extern crate filetime;
-extern crate time;
-
-use self::filetime::*;
-use crate::common::util::*;
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
+use crate::common::util::TestScenario;
+use filetime::FileTime;
+use std::thread::sleep;
+use std::time::Duration;
 
 #[test]
 fn test_invalid_arg() {
@@ -55,7 +58,64 @@ fn test_mv_move_file_into_dir() {
 
     ucmd.arg(file).arg(dir).succeeds().no_stderr();
 
-    assert!(at.file_exists(&format!("{}/{}", dir, file)));
+    assert!(at.file_exists(format!("{dir}/{file}")));
+}
+
+#[test]
+fn test_mv_move_file_into_dir_with_target_arg() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let dir = "test_mv_move_file_into_dir_with_target_arg_dir";
+    let file = "test_mv_move_file_into_dir_with_target_arg_file";
+
+    at.mkdir(dir);
+    at.touch(file);
+
+    ucmd.arg("--target")
+        .arg(dir)
+        .arg(file)
+        .succeeds()
+        .no_stderr();
+
+    assert!(at.file_exists(format!("{dir}/{file}")));
+}
+
+#[test]
+fn test_mv_move_file_into_file_with_target_arg() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let file1 = "test_mv_move_file_into_file_with_target_arg_file1";
+    let file2 = "test_mv_move_file_into_file_with_target_arg_file2";
+
+    at.touch(file1);
+    at.touch(file2);
+
+    ucmd.arg("--target")
+        .arg(file1)
+        .arg(file2)
+        .fails()
+        .stderr_is(format!("mv: target directory '{file1}': Not a directory\n"));
+
+    assert!(at.file_exists(file1));
+}
+
+#[test]
+fn test_mv_move_multiple_files_into_file() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let file1 = "test_mv_move_multiple_files_into_file1";
+    let file2 = "test_mv_move_multiple_files_into_file2";
+    let file3 = "test_mv_move_multiple_files_into_file3";
+
+    at.touch(file1);
+    at.touch(file2);
+    at.touch(file3);
+
+    ucmd.arg(file1)
+        .arg(file2)
+        .arg(file3)
+        .fails()
+        .stderr_is(format!("mv: target '{file3}': Not a directory\n"));
+
+    assert!(at.file_exists(file1));
+    assert!(at.file_exists(file2));
 }
 
 #[test]
@@ -67,17 +127,17 @@ fn test_mv_move_file_between_dirs() {
 
     at.mkdir(dir1);
     at.mkdir(dir2);
-    at.touch(&format!("{}/{}", dir1, file));
+    at.touch(format!("{dir1}/{file}"));
 
-    assert!(at.file_exists(&format!("{}/{}", dir1, file)));
+    assert!(at.file_exists(format!("{dir1}/{file}")));
 
-    ucmd.arg(&format!("{}/{}", dir1, file))
+    ucmd.arg(&format!("{dir1}/{file}"))
         .arg(dir2)
         .succeeds()
         .no_stderr();
 
-    assert!(!at.file_exists(&format!("{}/{}", dir1, file)));
-    assert!(at.file_exists(&format!("{}/{}", dir2, file)));
+    assert!(!at.file_exists(format!("{dir1}/{file}")));
+    assert!(at.file_exists(format!("{dir2}/{file}")));
 }
 
 #[test]
@@ -94,7 +154,7 @@ fn test_mv_strip_slashes() {
 
     scene.ucmd().arg(&source).arg(dir).fails();
 
-    assert!(!at.file_exists(&format!("{}/{}", dir, file)));
+    assert!(!at.file_exists(format!("{dir}/{file}")));
 
     scene
         .ucmd()
@@ -104,7 +164,7 @@ fn test_mv_strip_slashes() {
         .succeeds()
         .no_stderr();
 
-    assert!(at.file_exists(&format!("{}/{}", dir, file)));
+    assert!(at.file_exists(format!("{dir}/{file}")));
 }
 
 #[test]
@@ -124,8 +184,8 @@ fn test_mv_multiple_files() {
         .succeeds()
         .no_stderr();
 
-    assert!(at.file_exists(&format!("{}/{}", target_dir, file_a)));
-    assert!(at.file_exists(&format!("{}/{}", target_dir, file_b)));
+    assert!(at.file_exists(format!("{target_dir}/{file_a}")));
+    assert!(at.file_exists(format!("{target_dir}/{file_b}")));
 }
 
 #[test]
@@ -145,8 +205,8 @@ fn test_mv_multiple_folders() {
         .succeeds()
         .no_stderr();
 
-    assert!(at.dir_exists(&format!("{}/{}", target_dir, dir_a)));
-    assert!(at.dir_exists(&format!("{}/{}", target_dir, dir_b)));
+    assert!(at.dir_exists(&format!("{target_dir}/{dir_a}")));
+    assert!(at.dir_exists(&format!("{target_dir}/{dir_b}")));
 }
 
 #[test]
@@ -165,7 +225,7 @@ fn test_mv_interactive() {
         .arg(file_a)
         .arg(file_b)
         .pipe_in("n")
-        .succeeds()
+        .fails()
         .no_stdout();
 
     assert!(at.file_exists(file_a));
@@ -182,6 +242,81 @@ fn test_mv_interactive() {
 
     assert!(!at.file_exists(file_a));
     assert!(at.file_exists(file_b));
+}
+
+#[test]
+fn test_mv_interactive_with_dir_as_target() {
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    let file = "test_mv_interactive_file";
+    let target_dir = "target";
+
+    at.mkdir(target_dir);
+    at.touch(file);
+    at.touch(format!("{target_dir}/{file}"));
+
+    ucmd.arg(file)
+        .arg(target_dir)
+        .arg("-i")
+        .pipe_in("n")
+        .fails()
+        .stderr_does_not_contain("cannot move")
+        .no_stdout();
+}
+
+#[test]
+fn test_mv_interactive_dir_to_file_not_affirmative() {
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    let dir = "test_mv_interactive_dir_to_file_not_affirmative_dir";
+    let file = "test_mv_interactive_dir_to_file_not_affirmative_file";
+
+    at.mkdir(dir);
+    at.touch(file);
+
+    ucmd.arg(dir)
+        .arg(file)
+        .arg("-i")
+        .pipe_in("n")
+        .fails()
+        .no_stdout();
+
+    assert!(at.dir_exists(dir));
+}
+
+#[test]
+fn test_mv_interactive_no_clobber_force_last_arg_wins() {
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+
+    let file_a = "a.txt";
+    let file_b = "b.txt";
+
+    at.touch(file_a);
+    at.touch(file_b);
+
+    scene
+        .ucmd()
+        .args(&[file_a, file_b, "-f", "-i", "-n"])
+        .fails()
+        .stderr_is(format!("mv: not replacing '{file_b}'\n"));
+
+    scene
+        .ucmd()
+        .args(&[file_a, file_b, "-n", "-f", "-i"])
+        .fails()
+        .stderr_is(format!("mv: overwrite '{file_b}'? "));
+
+    at.write(file_a, "aa");
+
+    scene
+        .ucmd()
+        .args(&[file_a, file_b, "-i", "-n", "-f"])
+        .succeeds()
+        .no_output();
+
+    assert!(!at.file_exists(file_a));
+    assert_eq!("aa", at.read(file_b));
 }
 
 #[test]
@@ -215,8 +350,9 @@ fn test_mv_no_clobber() {
     ucmd.arg("-n")
         .arg(file_a)
         .arg(file_b)
-        .succeeds()
-        .no_stderr();
+        .fails()
+        .code_is(1)
+        .stderr_only(format!("mv: not replacing '{file_b}'\n"));
 
     assert!(at.file_exists(file_a));
     assert!(at.file_exists(file_b));
@@ -262,10 +398,136 @@ fn test_mv_same_file() {
     let file_a = "test_mv_same_file_a";
 
     at.touch(file_a);
-    ucmd.arg(file_a).arg(file_a).fails().stderr_is(format!(
-        "mv: '{f}' and '{f}' are the same file\n",
-        f = file_a,
-    ));
+    ucmd.arg(file_a)
+        .arg(file_a)
+        .fails()
+        .stderr_is(format!("mv: '{file_a}' and '{file_a}' are the same file\n",));
+}
+
+#[test]
+#[cfg(all(unix, not(target_os = "android")))]
+fn test_mv_same_hardlink() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let file_a = "test_mv_same_file_a";
+    let file_b = "test_mv_same_file_b";
+    at.touch(file_a);
+
+    at.hard_link(file_a, file_b);
+
+    at.touch(file_a);
+    ucmd.arg(file_a)
+        .arg(file_b)
+        .fails()
+        .stderr_is(format!("mv: '{file_a}' and '{file_b}' are the same file\n",));
+}
+
+#[test]
+#[cfg(all(unix, not(target_os = "android")))]
+fn test_mv_same_symlink() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let file_a = "test_mv_same_file_a";
+    let file_b = "test_mv_same_file_b";
+    let file_c = "test_mv_same_file_c";
+
+    at.touch(file_a);
+
+    at.symlink_file(file_a, file_b);
+
+    ucmd.arg(file_b)
+        .arg(file_a)
+        .fails()
+        .stderr_is(format!("mv: '{file_b}' and '{file_a}' are the same file\n",));
+
+    let (at2, mut ucmd2) = at_and_ucmd!();
+    at2.touch(file_a);
+
+    at2.symlink_file(file_a, file_b);
+    ucmd2.arg(file_a).arg(file_b).succeeds();
+    assert!(at2.file_exists(file_b));
+    assert!(!at2.file_exists(file_a));
+
+    let (at3, mut ucmd3) = at_and_ucmd!();
+    at3.touch(file_a);
+
+    at3.symlink_file(file_a, file_b);
+    at3.symlink_file(file_b, file_c);
+
+    ucmd3.arg(file_c).arg(file_b).succeeds();
+    assert!(!at3.symlink_exists(file_c));
+    assert!(at3.symlink_exists(file_b));
+
+    let (at4, mut ucmd4) = at_and_ucmd!();
+    at4.touch(file_a);
+
+    at4.symlink_file(file_a, file_b);
+    at4.symlink_file(file_b, file_c);
+
+    ucmd4
+        .arg(file_c)
+        .arg(file_a)
+        .fails()
+        .stderr_is(format!("mv: '{file_c}' and '{file_a}' are the same file\n",));
+}
+
+#[test]
+#[cfg(all(unix, not(target_os = "android")))]
+fn test_mv_hardlink_to_symlink() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let file = "file";
+    let symlink_file = "symlink";
+    let hardlink_to_symlink_file = "hardlink_to_symlink";
+
+    at.touch(file);
+    at.symlink_file(file, symlink_file);
+    at.hard_link(symlink_file, hardlink_to_symlink_file);
+
+    ucmd.arg(symlink_file).arg(hardlink_to_symlink_file).fails();
+
+    let (at2, mut ucmd2) = at_and_ucmd!();
+
+    at2.touch(file);
+    at2.symlink_file(file, symlink_file);
+    at2.hard_link(symlink_file, hardlink_to_symlink_file);
+
+    ucmd2
+        .arg("--backup")
+        .arg(symlink_file)
+        .arg(hardlink_to_symlink_file)
+        .succeeds();
+    assert!(!at2.symlink_exists(symlink_file));
+    assert!(at2.symlink_exists(&format!("{hardlink_to_symlink_file}~")));
+}
+
+#[test]
+#[cfg(all(unix, not(target_os = "android")))]
+fn test_mv_same_hardlink_backup_simple() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let file_a = "test_mv_same_file_a";
+    let file_b = "test_mv_same_file_b";
+    at.touch(file_a);
+
+    at.hard_link(file_a, file_b);
+
+    ucmd.arg(file_a)
+        .arg(file_b)
+        .arg("--backup=simple")
+        .succeeds();
+}
+
+#[test]
+#[cfg(all(unix, not(target_os = "android")))]
+fn test_mv_same_hardlink_backup_simple_destroy() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let file_a = "test_mv_same_file_a~";
+    let file_b = "test_mv_same_file_a";
+    at.touch(file_a);
+    at.touch(file_b);
+
+    ucmd.arg(file_a)
+        .arg(file_b)
+        .arg("--b=simple")
+        .fails()
+        .stderr_contains("backing up 'test_mv_same_file_a' might destroy source");
 }
 
 #[test]
@@ -275,8 +537,7 @@ fn test_mv_same_file_not_dot_dir() {
 
     at.mkdir(dir);
     ucmd.arg(dir).arg(dir).fails().stderr_is(format!(
-        "mv: cannot move '{d}' to a subdirectory of itself, '{d}/{d}'",
-        d = dir,
+        "mv: cannot move '{dir}' to a subdirectory of itself, '{dir}/{dir}'\n",
     ));
 }
 
@@ -306,7 +567,7 @@ fn test_mv_simple_backup() {
 
     assert!(!at.file_exists(file_a));
     assert!(at.file_exists(file_b));
-    assert!(at.file_exists(&format!("{}~", file_b)));
+    assert!(at.file_exists(format!("{file_b}~")));
 }
 
 #[test]
@@ -325,7 +586,7 @@ fn test_mv_simple_backup_with_file_extension() {
 
     assert!(!at.file_exists(file_a));
     assert!(at.file_exists(file_b));
-    assert!(at.file_exists(&format!("{}~", file_b)));
+    assert!(at.file_exists(format!("{file_b}~")));
 }
 
 #[test]
@@ -340,7 +601,7 @@ fn test_mv_arg_backup_arg_first() {
 
     assert!(!at.file_exists(file_a));
     assert!(at.file_exists(file_b));
-    assert!(at.file_exists(&format!("{}~", file_b)));
+    assert!(at.file_exists(format!("{file_b}~")));
 }
 
 #[test]
@@ -353,7 +614,7 @@ fn test_mv_custom_backup_suffix() {
     at.touch(file_a);
     at.touch(file_b);
     ucmd.arg("-b")
-        .arg(format!("--suffix={}", suffix))
+        .arg(format!("--suffix={suffix}"))
         .arg(file_a)
         .arg(file_b)
         .succeeds()
@@ -361,7 +622,7 @@ fn test_mv_custom_backup_suffix() {
 
     assert!(!at.file_exists(file_a));
     assert!(at.file_exists(file_b));
-    assert!(at.file_exists(&format!("{}{}", file_b, suffix)));
+    assert!(at.file_exists(format!("{file_b}{suffix}")));
 }
 
 #[test]
@@ -374,7 +635,7 @@ fn test_mv_custom_backup_suffix_hyphen_value() {
     at.touch(file_a);
     at.touch(file_b);
     ucmd.arg("-b")
-        .arg(format!("--suffix={}", suffix))
+        .arg(format!("--suffix={suffix}"))
         .arg(file_a)
         .arg(file_b)
         .succeeds()
@@ -382,7 +643,7 @@ fn test_mv_custom_backup_suffix_hyphen_value() {
 
     assert!(!at.file_exists(file_a));
     assert!(at.file_exists(file_b));
-    assert!(at.file_exists(&format!("{}{}", file_b, suffix)));
+    assert!(at.file_exists(format!("{file_b}{suffix}")));
 }
 
 #[test]
@@ -402,7 +663,7 @@ fn test_mv_custom_backup_suffix_via_env() {
 
     assert!(!at.file_exists(file_a));
     assert!(at.file_exists(file_b));
-    assert!(at.file_exists(&format!("{}{}", file_b, suffix)));
+    assert!(at.file_exists(format!("{file_b}{suffix}")));
 }
 
 #[test]
@@ -421,7 +682,7 @@ fn test_mv_backup_numbered_with_t() {
 
     assert!(!at.file_exists(file_a));
     assert!(at.file_exists(file_b));
-    assert!(at.file_exists(&format!("{}.~1~", file_b)));
+    assert!(at.file_exists(format!("{file_b}.~1~")));
 }
 
 #[test]
@@ -440,7 +701,7 @@ fn test_mv_backup_numbered() {
 
     assert!(!at.file_exists(file_a));
     assert!(at.file_exists(file_b));
-    assert!(at.file_exists(&format!("{}.~1~", file_b)));
+    assert!(at.file_exists(format!("{file_b}.~1~")));
 }
 
 #[test]
@@ -459,7 +720,7 @@ fn test_mv_backup_existing() {
 
     assert!(!at.file_exists(file_a));
     assert!(at.file_exists(file_b));
-    assert!(at.file_exists(&format!("{}~", file_b)));
+    assert!(at.file_exists(format!("{file_b}~")));
 }
 
 #[test]
@@ -478,7 +739,7 @@ fn test_mv_backup_nil() {
 
     assert!(!at.file_exists(file_a));
     assert!(at.file_exists(file_b));
-    assert!(at.file_exists(&format!("{}~", file_b)));
+    assert!(at.file_exists(format!("{file_b}~")));
 }
 
 #[test]
@@ -499,7 +760,7 @@ fn test_mv_numbered_if_existing_backup_existing() {
 
     assert!(at.file_exists(file_b));
     assert!(at.file_exists(file_b_backup));
-    assert!(at.file_exists(&format!("{}.~2~", file_b)));
+    assert!(at.file_exists(format!("{file_b}.~2~")));
 }
 
 #[test]
@@ -520,7 +781,7 @@ fn test_mv_numbered_if_existing_backup_nil() {
 
     assert!(at.file_exists(file_b));
     assert!(at.file_exists(file_b_backup));
-    assert!(at.file_exists(&format!("{}.~2~", file_b)));
+    assert!(at.file_exists(format!("{file_b}.~2~")));
 }
 
 #[test]
@@ -539,7 +800,7 @@ fn test_mv_backup_simple() {
 
     assert!(!at.file_exists(file_a));
     assert!(at.file_exists(file_b));
-    assert!(at.file_exists(&format!("{}~", file_b)));
+    assert!(at.file_exists(format!("{file_b}~")));
 }
 
 #[test]
@@ -558,7 +819,7 @@ fn test_mv_backup_never() {
 
     assert!(!at.file_exists(file_a));
     assert!(at.file_exists(file_b));
-    assert!(at.file_exists(&format!("{}~", file_b)));
+    assert!(at.file_exists(format!("{file_b}~")));
 }
 
 #[test]
@@ -577,7 +838,7 @@ fn test_mv_backup_none() {
 
     assert!(!at.file_exists(file_a));
     assert!(at.file_exists(file_b));
-    assert!(!at.file_exists(&format!("{}~", file_b)));
+    assert!(!at.file_exists(format!("{file_b}~")));
 }
 
 #[test]
@@ -596,7 +857,7 @@ fn test_mv_backup_off() {
 
     assert!(!at.file_exists(file_a));
     assert!(at.file_exists(file_b));
-    assert!(!at.file_exists(&format!("{}~", file_b)));
+    assert!(!at.file_exists(format!("{file_b}~")));
 }
 
 #[test]
@@ -619,7 +880,7 @@ fn test_mv_update_option() {
 
     at.touch(file_a);
     at.touch(file_b);
-    let ts = time::OffsetDateTime::now_local().unwrap();
+    let ts = time::OffsetDateTime::now_utc();
     let now = FileTime::from_unix_time(ts.unix_timestamp(), ts.nanosecond());
     let later = FileTime::from_unix_time(ts.unix_timestamp() + 3600, ts.nanosecond());
     filetime::set_file_times(at.plus_as_string(file_a), now, now).unwrap();
@@ -643,6 +904,208 @@ fn test_mv_update_option() {
 }
 
 #[test]
+fn test_mv_arg_update_none() {
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    let file1 = "test_mv_arg_update_none_file1";
+    let file2 = "test_mv_arg_update_none_file2";
+    let file1_content = "file1 content\n";
+    let file2_content = "file2 content\n";
+
+    at.write(file1, file1_content);
+    at.write(file2, file2_content);
+
+    ucmd.arg(file1)
+        .arg(file2)
+        .arg("--update=none")
+        .succeeds()
+        .no_stderr()
+        .no_stdout();
+
+    assert_eq!(at.read(file2), file2_content);
+}
+
+#[test]
+fn test_mv_arg_update_all() {
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    let file1 = "test_mv_arg_update_none_file1";
+    let file2 = "test_mv_arg_update_none_file2";
+    let file1_content = "file1 content\n";
+    let file2_content = "file2 content\n";
+
+    at.write(file1, file1_content);
+    at.write(file2, file2_content);
+
+    ucmd.arg(file1)
+        .arg(file2)
+        .arg("--update=all")
+        .succeeds()
+        .no_stderr()
+        .no_stdout();
+
+    assert_eq!(at.read(file2), file1_content);
+}
+
+#[test]
+fn test_mv_arg_update_older_dest_not_older() {
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    let old = "test_mv_arg_update_none_file1";
+    let new = "test_mv_arg_update_none_file2";
+    let old_content = "file1 content\n";
+    let new_content = "file2 content\n";
+
+    at.write(old, old_content);
+
+    sleep(Duration::from_secs(1));
+
+    at.write(new, new_content);
+
+    ucmd.arg(old)
+        .arg(new)
+        .arg("--update=older")
+        .succeeds()
+        .no_stderr()
+        .no_stdout();
+
+    assert_eq!(at.read(new), new_content);
+}
+
+#[test]
+fn test_mv_arg_update_none_then_all() {
+    // take last if multiple update args are supplied,
+    // update=all wins in this case
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    let old = "test_mv_arg_update_none_then_all_file1";
+    let new = "test_mv_arg_update_none_then_all_file2";
+    let old_content = "old content\n";
+    let new_content = "new content\n";
+
+    at.write(old, old_content);
+
+    sleep(Duration::from_secs(1));
+
+    at.write(new, new_content);
+
+    ucmd.arg(old)
+        .arg(new)
+        .arg("--update=none")
+        .arg("--update=all")
+        .succeeds()
+        .no_stderr()
+        .no_stdout();
+
+    assert_eq!(at.read(new), "old content\n");
+}
+
+#[test]
+fn test_mv_arg_update_all_then_none() {
+    // take last if multiple update args are supplied,
+    // update=none wins in this case
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    let old = "test_mv_arg_update_all_then_none_file1";
+    let new = "test_mv_arg_update_all_then_none_file2";
+    let old_content = "old content\n";
+    let new_content = "new content\n";
+
+    at.write(old, old_content);
+
+    sleep(Duration::from_secs(1));
+
+    at.write(new, new_content);
+
+    ucmd.arg(old)
+        .arg(new)
+        .arg("--update=all")
+        .arg("--update=none")
+        .succeeds()
+        .no_stderr()
+        .no_stdout();
+
+    assert_eq!(at.read(new), "new content\n");
+}
+
+#[test]
+fn test_mv_arg_update_older_dest_older() {
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    let old = "test_mv_arg_update_none_file1";
+    let new = "test_mv_arg_update_none_file2";
+    let old_content = "file1 content\n";
+    let new_content = "file2 content\n";
+
+    at.write(old, old_content);
+
+    sleep(Duration::from_secs(1));
+
+    at.write(new, new_content);
+
+    ucmd.arg(new)
+        .arg(old)
+        .arg("--update=all")
+        .succeeds()
+        .no_stderr()
+        .no_stdout();
+
+    assert_eq!(at.read(old), new_content);
+}
+
+#[test]
+fn test_mv_arg_update_short_overwrite() {
+    // same as --update=older
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    let old = "test_mv_arg_update_none_file1";
+    let new = "test_mv_arg_update_none_file2";
+    let old_content = "file1 content\n";
+    let new_content = "file2 content\n";
+
+    at.write(old, old_content);
+
+    sleep(Duration::from_secs(1));
+
+    at.write(new, new_content);
+
+    ucmd.arg(new)
+        .arg(old)
+        .arg("-u")
+        .succeeds()
+        .no_stderr()
+        .no_stdout();
+
+    assert_eq!(at.read(old), new_content);
+}
+
+#[test]
+fn test_mv_arg_update_short_no_overwrite() {
+    // same as --update=older
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    let old = "test_mv_arg_update_none_file1";
+    let new = "test_mv_arg_update_none_file2";
+    let old_content = "file1 content\n";
+    let new_content = "file2 content\n";
+
+    at.write(old, old_content);
+
+    sleep(Duration::from_secs(1));
+
+    at.write(new, new_content);
+
+    ucmd.arg(old)
+        .arg(new)
+        .arg("-u")
+        .succeeds()
+        .no_stderr()
+        .no_stdout();
+
+    assert_eq!(at.read(new), new_content);
+}
+
+#[test]
 fn test_mv_target_dir() {
     let (at, mut ucmd) = at_and_ucmd!();
     let dir = "test_mv_target_dir_dir";
@@ -661,8 +1124,8 @@ fn test_mv_target_dir() {
 
     assert!(!at.file_exists(file_a));
     assert!(!at.file_exists(file_b));
-    assert!(at.file_exists(&format!("{}/{}", dir, file_a)));
-    assert!(at.file_exists(&format!("{}/{}", dir, file_b)));
+    assert!(at.file_exists(format!("{dir}/{file_a}")));
+    assert!(at.file_exists(format!("{dir}/{file_b}")));
 }
 
 #[test]
@@ -676,7 +1139,7 @@ fn test_mv_target_dir_single_source() {
     ucmd.arg("-t").arg(dir).arg(file).succeeds().no_stderr();
 
     assert!(!at.file_exists(file));
-    assert!(at.file_exists(&format!("{}/{}", dir, file)));
+    assert!(at.file_exists(format!("{dir}/{file}")));
 }
 
 #[test]
@@ -730,13 +1193,12 @@ fn test_mv_backup_dir() {
         .arg(dir_b)
         .succeeds()
         .stdout_only(format!(
-            "'{}' -> '{}' (backup: '{}~')\n",
-            dir_a, dir_b, dir_b
+            "renamed '{dir_a}' -> '{dir_b}' (backup: '{dir_b}~')\n"
         ));
 
     assert!(!at.dir_exists(dir_a));
     assert!(at.dir_exists(dir_b));
-    assert!(at.dir_exists(&format!("{}~", dir_b)));
+    assert!(at.dir_exists(&format!("{dir_b}~")));
 }
 
 #[test]
@@ -772,8 +1234,7 @@ fn test_mv_errors() {
         .arg(dir)
         .fails()
         .stderr_is(format!(
-            "mv: cannot overwrite directory '{}' with non-directory\n",
-            dir
+            "mv: cannot overwrite directory '{dir}' with non-directory\n"
         ));
 
     // $ at.mkdir dir && at.touch file
@@ -805,7 +1266,7 @@ fn test_mv_verbose() {
         .arg(file_a)
         .arg(file_b)
         .succeeds()
-        .stdout_only(format!("'{}' -> '{}'\n", file_a, file_b));
+        .stdout_only(format!("renamed '{file_a}' -> '{file_b}'\n"));
 
     at.touch(file_a);
     scene
@@ -815,14 +1276,13 @@ fn test_mv_verbose() {
         .arg(file_b)
         .succeeds()
         .stdout_only(format!(
-            "'{}' -> '{}' (backup: '{}~')\n",
-            file_a, file_b, file_b
+            "renamed '{file_a}' -> '{file_b}' (backup: '{file_b}~')\n"
         ));
 }
 
 #[test]
 #[cfg(any(target_os = "linux", target_os = "android"))] // mkdir does not support -m on windows. Freebsd doesn't return a permission error either.
-#[cfg(features = "mkdir")]
+#[cfg(feature = "mkdir")]
 fn test_mv_permission_error() {
     let scene = TestScenario::new("mkdir");
     let folder1 = "bar";
@@ -878,6 +1338,29 @@ fn test_mv_info_self() {
         .arg(dir2)
         .fails()
         .stderr_contains("mv: cannot move 'dir2' to a subdirectory of itself, 'dir2/dir2'");
+}
+
+#[test]
+fn test_mv_arg_interactive_skipped() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    at.touch("a");
+    at.touch("b");
+    ucmd.args(&["-vi", "a", "b"])
+        .pipe_in("N\n")
+        .ignore_stdin_write_error()
+        .fails()
+        .stderr_is("mv: overwrite 'b'? ")
+        .stdout_is("skipped 'b'\n");
+}
+
+#[test]
+fn test_mv_arg_interactive_skipped_vin() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    at.touch("a");
+    at.touch("b");
+    ucmd.args(&["-vin", "a", "b"])
+        .fails()
+        .stdout_is("skipped 'b'\n");
 }
 
 #[test]
